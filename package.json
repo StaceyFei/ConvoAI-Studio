@@ -5,14 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:client": "vite",
+    "dev:client": "mkdir -p /tmp/convoai-studio-vite-cache /tmp/convoai-studio-tsbuildinfo && vite --configLoader runner",
     "dev:server": "node --env-file=.env server/index.js",
-    "build": "tsc -b && vite build",
-    "build:client": "tsc -b && vite build",
+    "build": "mkdir -p /tmp/convoai-studio-vite-cache /tmp/convoai-studio-tsbuildinfo && tsc -b && vite build --configLoader runner",
+    "build:client": "mkdir -p /tmp/convoai-studio-vite-cache /tmp/convoai-studio-tsbuildinfo && tsc -b && vite build --configLoader runner",
     "server": "node server/index.js",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "check": "tsc -b --noEmit"
+    "preview": "mkdir -p /tmp/convoai-studio-vite-cache /tmp/convoai-studio-tsbuildinfo && vite preview --configLoader runner",
+    "check": "mkdir -p /tmp/convoai-studio-tsbuildinfo && tsc -b --noEmit"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

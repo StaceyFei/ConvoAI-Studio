@@ -4,6 +4,8 @@ import tsconfigPaths from "vite-tsconfig-paths";
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Use a writable cache directory outside node_modules for restricted environments.
+  cacheDir: '/tmp/convoai-studio-vite-cache',
   build: {
     sourcemap: 'hidden',
   },
