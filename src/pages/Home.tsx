@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Group, Panel, Separator } from "react-resizable-panels";
 import {
   ArrowUp,
   AudioLines,
@@ -8,8 +9,10 @@ import {
   BotMessageSquare,
   BookOpen,
   Boxes,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
+  Check,
   Copy,
   Download,
   EllipsisVertical,
@@ -29,6 +32,7 @@ import {
   X,
 } from "lucide-react";
 import ChatPanel from "@/components/ChatPanel";
+import PreviewPanel from "@/components/PreviewPanel";
 import Workspace from "@/components/Workspace";
 import {
   type AgentSummary,
@@ -36,8 +40,20 @@ import {
   type SkillItem,
   type ToolItem,
   type WorkspaceSection,
+  buildAgentConfigJson,
+  buildEmptyConfigJson,
   useWorkspaceStore,
 } from "@/store/workspace";
+import {
+  type ResourceKind,
+  type ThirdPartyResourceItem,
+  RESOURCE_KIND_LABEL,
+  formatOptionLines,
+  getResourceProviderTemplate,
+  getTemplatesByKind,
+  maskCredentialValue,
+  parseOptionLines,
+} from "@/lib/thirdPartyResources";
 
 type NavItem = {
   type: "item";
@@ -76,14 +92,6 @@ type BusinessIdItem = {
   status: "已启用" | "测试中";
 };
 
-type ResourcePackageItem = {
-  id: string;
-  name: string;
-  quota: string;
-  expireAt: string;
-  status: "生效中" | "待启用";
-};
-
 type LicenseItem = {
   id: string;
   name: string;
@@ -118,6 +126,21 @@ type SkillFormState = {
   category: string;
   model: string;
 };
+
+type ResourceFormState = {
+  id?: string;
+  name: string;
+  kind: ResourceKind;
+  providerKey: string;
+  endpoint: string;
+  status: ThirdPartyResourceItem["status"];
+  modelLines: string;
+  voiceLines: string;
+  notes: string;
+  credentialValues: Record<string, string>;
+};
+
+type ResourceFilter = "全部" | ResourceKind;
 
 type AgentCreateMode = "template" | "custom";
 
@@ -239,6 +262,27 @@ const formatModelLabel = (model: string) => {
 const formatVoiceLabel = (voice: string) => {
   const provider = voiceProviderDisplayMap.find((item) => item.voices.includes(voice))?.label;
   return provider ? `${provider} / ${voice}` : voice;
+};
+
+const createResourceFormState = (
+  kind: ResourceKind = "LLM",
+  resource?: ThirdPartyResourceItem
+): ResourceFormState => {
+  const defaultTemplate = getTemplatesByKind(resource?.kind ?? kind)[0];
+  const template = resource ? getResourceProviderTemplate(resource.providerKey) ?? defaultTemplate : defaultTemplate;
+
+  return {
+    id: resource?.id,
+    name: resource?.name ?? "",
+    kind: resource?.kind ?? kind,
+    providerKey: resource?.providerKey ?? defaultTemplate?.key ?? "",
+    endpoint: resource?.endpoint ?? template?.endpointPlaceholder ?? "",
+    status: resource?.status ?? "草稿",
+    modelLines: resource ? formatOptionLines(resource.modelOptions) : formatOptionLines(template?.defaultModels ?? []),
+    voiceLines: resource ? formatOptionLines(resource.voiceOptions) : formatOptionLines(template?.defaultVoices ?? []),
+    notes: resource?.notes ?? "",
+    credentialValues: resource?.credentialValues ?? Object.fromEntries((template?.fields ?? []).map((field) => [field.key, ""])),
+  };
 };
 
 const navItems: Array<NavItem | NavGroup> = [
@@ -445,10 +489,15 @@ export default function Home() {
     knowledgeBaseList,
     toolList,
     skillList,
+    resourceList,
     openAgentEditor,
     setViewMode,
     addAgent,
     removeAgent,
+    previewAgent,
+    setPreviewAgent,
+    isCalling,
+    toggleCall,
     addVoiceProfile,
     updateVoiceProfile,
     addKnowledgeBase,
@@ -460,6 +509,9 @@ export default function Home() {
     addSkill,
     updateSkill,
     deleteSkill,
+    addResource,
+    updateResource,
+    deleteResource,
     setChatInput,
   } = useWorkspaceStore();
   const [appKeyList, setAppKeyList] = useState<AppKeyItem[]>([
@@ -482,10 +534,6 @@ export default function Home() {
     "voiceprint-denoise": false,
     "multi-voiceprint-identification": false,
   });
-  const [resourcePackageList, setResourcePackageList] = useState<ResourcePackageItem[]>([
-    { id: "pkg-1", name: "RTC 基础包", quota: "180,000 分钟", expireAt: "2027-03-31", status: "生效中" },
-    { id: "pkg-2", name: "TTS 语音包", quota: "90,000 次", expireAt: "2027-06-30", status: "待启用" },
-  ]);
   const [licenseList, setLicenseList] = useState<LicenseItem[]>([
     {
       id: "lic-1",
@@ -602,18 +650,99 @@ export default function Home() {
     category: "自定义",
     model: "doubao-seed-1-6-flash",
   });
+  const [resourceFormOpen, setResourceFormOpen] = useState(false);
+  const [resourceFormState, setResourceFormState] = useState<ResourceFormState>(() => createResourceFormState("LLM"));
+  const [resourceFilter, setResourceFilter] = useState<ResourceFilter>("全部");
   const [agentCreateEntryOpen, setAgentCreateEntryOpen] = useState(false);
-  const [agentTemplateDialogOpen, setAgentTemplateDialogOpen] = useState(false);
+  const [agentTemplatePageOpen, setAgentTemplatePageOpen] = useState(false);
   const [selectedAgentTemplateId, setSelectedAgentTemplateId] = useState(agentTemplates[0].id);
   const [agentNameDialogMode, setAgentNameDialogMode] = useState<AgentCreateMode | null>(null);
   const [agentNameInput, setAgentNameInput] = useState("");
   const [agentDescriptionInput, setAgentDescriptionInput] = useState("");
   const [agentActionMenuId, setAgentActionMenuId] = useState<string | null>(null);
+  const [pendingDeleteAgent, setPendingDeleteAgent] = useState<AgentSummary | null>(null);
+  const [copiedAgentId, setCopiedAgentId] = useState<string | null>(null);
   const isDark = theme === "dark";
   const resolvedSidebarWidth = isSidebarCollapsed ? 52 : 232;
   const assistantLayoutRef = useRef<HTMLDivElement | null>(null);
   const selectedAgentTemplate =
     agentTemplates.find((item) => item.id === selectedAgentTemplateId) ?? agentTemplates[0];
+  const resourceBindings = resourceList.map((resource) => {
+    const boundAgents = agentList.filter((agent) => {
+      try {
+        const parsed = JSON.parse(agent.configJson);
+        const llmId = parsed?.Config?.LLMConfig?.ProviderParams?.ManagedResourceId;
+        const asrId = parsed?.Config?.ASRConfig?.ProviderParams?.ManagedResourceId;
+        const ttsId = parsed?.Config?.TTSConfig?.ProviderParams?.ManagedResourceId;
+        return [llmId, asrId, ttsId].includes(resource.id);
+      } catch {
+        return false;
+      }
+    });
+
+    return {
+      resource,
+      boundAgents,
+    };
+  });
+  const filteredResourceBindings = resourceBindings.filter(({ resource }) =>
+    resourceFilter === "全部" ? true : resource.kind === resourceFilter
+  );
+
+  const handleCopyAgentBotId = async (event: React.MouseEvent<HTMLButtonElement>, agentId: string, botId: string) => {
+    event.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(botId);
+      setCopiedAgentId(agentId);
+      window.setTimeout(() => {
+        setCopiedAgentId((current) => (current === agentId ? null : current));
+      }, 1800);
+    } catch (error) {
+      console.error("Failed to copy botId", error);
+    }
+  };
+
+  const getManagedProviderLabel = (model: string) => {
+    const matched = resourceList.find((resource) => resource.modelOptions.some((option) => option.value === model));
+    return matched?.providerLabel;
+  };
+
+  const getManagedVoiceLabel = (voice: string) => {
+    const matched = resourceList.find((resource) =>
+      resource.voiceOptions.some((option) => option.label === voice || option.value === voice)
+    );
+    return matched?.providerLabel;
+  };
+
+  const formatManagedModelLabel = (model: string) => {
+    const provider = getManagedProviderLabel(model);
+    return provider ? `${provider} / ${model}` : formatModelLabel(model);
+  };
+
+  const formatManagedVoiceLabel = (voice: string) => {
+    const provider = getManagedVoiceLabel(voice);
+    return provider ? `${provider} / ${voice}` : formatVoiceLabel(voice);
+  };
+
+  const handleResourceKindChange = (kind: ResourceKind) => {
+    setResourceFormState(createResourceFormState(kind));
+  };
+
+  const handleResourceProviderChange = (providerKey: string) => {
+    const template = getResourceProviderTemplate(providerKey);
+    if (!template) return;
+    setResourceFormState((prev) => ({
+      ...prev,
+      kind: template.kind,
+      providerKey,
+      endpoint: prev.id ? prev.endpoint : template.endpointPlaceholder,
+      modelLines: prev.id ? prev.modelLines : formatOptionLines(template.defaultModels ?? []),
+      voiceLines: prev.id ? prev.voiceLines : formatOptionLines(template.defaultVoices ?? []),
+      credentialValues: Object.fromEntries(
+        template.fields.map((field) => [field.key, prev.credentialValues[field.key] ?? ""])
+      ),
+    }));
+  };
 
 
   useEffect(() => {
@@ -644,7 +773,11 @@ export default function Home() {
   useEffect(() => {
     if (!agentActionMenuId) return;
 
-    const handlePointerDown = () => {
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-agent-action-menu='true']")) {
+        return;
+      }
       setAgentActionMenuId(null);
     };
 
@@ -719,6 +852,8 @@ export default function Home() {
     mode: "detail" | "code" = "detail",
     preset: "default" | "blank" = "default"
   ) => {
+    setPreviewAgent(null);
+    setAgentTemplatePageOpen(false);
     setViewMode(mode);
     openAgentEditor(agent, preset);
   };
@@ -733,20 +868,44 @@ export default function Home() {
     setAgentDescriptionInput(initialDescription);
   };
 
-  const createAgentRecord = (name: string, detailDescription: string, template?: AgentTemplate): AgentSummary => ({
-    id: createId("agent"),
-    name,
-    description: template ? `${template.name}模板 · ${template.summary}` : "自定义智能体",
-    detailDescription,
-    botId: `xbot${Math.random().toString(36).slice(2, 10)}`,
-    model: template?.model ?? "doubao-seed-1-6-flash-250828",
-    voice: template?.voice ?? "晓言·专业女声",
-    updatedAt: formatDateTime(),
-  });
+  const createAgentRecord = (name: string, detailDescription: string, template?: AgentTemplate): AgentSummary => {
+    const matchedLlmResource = template
+      ? resourceList.find((resource) => resource.kind === "LLM" && resource.modelOptions.some((option) => option.value === template.model))
+      : undefined;
+    const matchedTtsResource = template
+      ? resourceList.find((resource) => resource.kind === "TTS" && resource.voiceOptions.some((option) => option.label === template.voice))
+      : undefined;
+    const matchedVoiceValue =
+      matchedTtsResource?.voiceOptions.find((option) => option.label === template?.voice)?.value;
+    const configJson = template
+      ? buildAgentConfigJson({
+          resources: resourceList,
+          llmResourceId: matchedLlmResource?.id,
+          llmModel: template.model,
+          ttsResourceId: matchedTtsResource?.id,
+          ttsVoice: matchedVoiceValue,
+          prompt: template.prompt,
+          welcomeMessage: template.welcomeMessage,
+        })
+      : buildEmptyConfigJson();
+
+    return {
+      id: createId("agent"),
+      name,
+      description: template ? `${template.name}模板 · ${template.summary}` : "自定义智能体",
+      detailDescription,
+      botId: `xbot${Math.random().toString(36).slice(2, 10)}`,
+      model: template?.model ?? "",
+      voice: template?.voice ?? "",
+      updatedAt: formatDateTime(),
+      configJson,
+    };
+  };
 
   const handleSelectAgentTemplate = () => {
     setAgentCreateEntryOpen(false);
-    setAgentTemplateDialogOpen(true);
+    setAgentTemplatePageOpen(true);
+    setCurrentSection("agents");
   };
 
   const handleSelectCustomAgent = () => {
@@ -794,13 +953,59 @@ export default function Home() {
   };
 
   const handleUseAgentTemplate = () => {
-    setAgentTemplateDialogOpen(false);
     openAgentNameDialog(
       "template",
       `${selectedAgentTemplate.name}_${agentList.length + 1}`,
       selectedAgentTemplate.description
     );
   };
+
+  const buildTemplatePreviewAgent = (template: AgentTemplate): AgentSummary => {
+    const matchedLlmResource = resourceList.find((resource) => resource.kind === "LLM" && resource.modelOptions.some((option) => option.value === template.model));
+    const matchedTtsResource = resourceList.find((resource) => resource.kind === "TTS" && resource.voiceOptions.some((option) => option.label === template.voice));
+    const matchedVoiceValue = matchedTtsResource?.voiceOptions.find((option) => option.label === template.voice)?.value;
+
+    const configJson = buildAgentConfigJson({
+      resources: resourceList,
+      llmResourceId: matchedLlmResource?.id,
+      llmModel: template.model,
+      ttsResourceId: matchedTtsResource?.id,
+      ttsVoice: matchedVoiceValue,
+      prompt: template.prompt,
+      welcomeMessage: template.welcomeMessage,
+    });
+
+    return {
+      id: "preview-temp",
+      name: template.name,
+      description: template.summary,
+      detailDescription: template.description,
+      botId: "preview-bot",
+      model: template.model,
+      voice: template.voice,
+      updatedAt: formatDateTime(),
+      configJson,
+    };
+  };
+
+  const closeAgentTemplatePage = () => {
+    if (isCalling) {
+      toggleCall();
+    }
+    setPreviewAgent(null);
+    setAgentTemplatePageOpen(false);
+  };
+
+  useEffect(() => {
+    if (!agentTemplatePageOpen) return;
+    setPreviewAgent(buildTemplatePreviewAgent(selectedAgentTemplate));
+  }, [agentTemplatePageOpen, selectedAgentTemplate, resourceList]);
+
+  useEffect(() => {
+    if (agentTemplatePageOpen && currentSection !== "agents") {
+      closeAgentTemplatePage();
+    }
+  }, [agentTemplatePageOpen, currentSection]);
 
   const handleConfirmAgentName = () => {
     const name = agentNameInput.trim();
@@ -814,14 +1019,24 @@ export default function Home() {
     setAgentNameInput("");
     setAgentDescriptionInput("");
 
+    if (agentNameDialogMode === "template") {
+      setPreviewAgent(null);
+      setAgentTemplatePageOpen(false);
+    }
+
     if (agentNameDialogMode === "custom") {
       openAgent(newAgent, "detail", "blank");
     }
   };
 
   const handleDeleteAgent = (agent: AgentSummary) => {
-    if (!window.confirm(`确认删除智能体“${agent.name}”吗？`)) return;
-    removeAgent(agent.id);
+    setPendingDeleteAgent(agent);
+  };
+
+  const handleConfirmDeleteAgent = () => {
+    if (!pendingDeleteAgent) return;
+    removeAgent(pendingDeleteAgent.id);
+    setPendingDeleteAgent(null);
   };
 
   const handleCloneVoice = () => {
@@ -1012,6 +1227,12 @@ export default function Home() {
       model,
       voice: "晓言·专业女声",
       updatedAt: formatDateTime(),
+      configJson: buildAgentConfigJson({
+        resources: resourceList,
+        llmModel: model,
+        prompt: description,
+        welcomeMessage: "你好，我已经准备好开始协助你了。",
+      }),
     };
   };
 
@@ -1158,31 +1379,53 @@ export default function Home() {
   };
 
   const handleCreateResourcePackage = () => {
-    const name = window.prompt("请输入资源包名称", `资源包_${resourcePackageList.length + 1}`)?.trim();
-    if (!name) return;
-    setResourcePackageList((prev) => [
-      {
-        id: createId("pkg"),
-        name,
-        quota: "30,000 次",
-        expireAt: "2027-12-31",
-        status: "待启用",
-      },
-      ...prev,
-    ]);
+    setResourceFormState(createResourceFormState("LLM"));
+    setResourceFormOpen(true);
   };
 
-  const handleEditResourcePackage = (item: ResourcePackageItem) => {
-    const quota = window.prompt("请输入资源额度", item.quota)?.trim();
-    if (!quota) return;
-    setResourcePackageList((prev) =>
-      prev.map((entry) => (entry.id === item.id ? { ...entry, quota } : entry))
-    );
+  const handleEditResource = (item: ThirdPartyResourceItem) => {
+    setResourceFormState(createResourceFormState(item.kind, item));
+    setResourceFormOpen(true);
   };
 
-  const handleDeleteResourcePackage = (item: ResourcePackageItem) => {
-    if (!window.confirm(`确认删除资源包“${item.name}”吗？`)) return;
-    setResourcePackageList((prev) => prev.filter((entry) => entry.id !== item.id));
+  const handleDeleteResource = (item: ThirdPartyResourceItem) => {
+    if (!window.confirm(`确认删除资源“${item.name}”吗？`)) return;
+    deleteResource(item.id);
+  };
+
+  const handleSaveResource = () => {
+    const template = getResourceProviderTemplate(resourceFormState.providerKey);
+    if (!template) return;
+
+    const name = resourceFormState.name.trim();
+    const endpoint = resourceFormState.endpoint.trim();
+    if (!name || !endpoint) return;
+
+    const payload: ThirdPartyResourceItem = {
+      id: resourceFormState.id ?? createId("resource"),
+      name,
+      kind: resourceFormState.kind,
+      providerKey: template.key,
+      providerLabel: template.label,
+      providerCode: template.providerCode,
+      mode: template.mode,
+      endpoint,
+      status: resourceFormState.status,
+      modelOptions: parseOptionLines(resourceFormState.modelLines),
+      voiceOptions: parseOptionLines(resourceFormState.voiceLines),
+      credentialValues: resourceFormState.credentialValues,
+      notes: resourceFormState.notes.trim(),
+      updatedAt: formatDateTime(),
+    };
+
+    if (resourceFormState.id) {
+      updateResource(payload.id, payload);
+    } else {
+      addResource(payload);
+    }
+
+    setResourceFormOpen(false);
+    setResourceFormState(createResourceFormState(payload.kind));
   };
 
   const handleCreateLicense = () => {
@@ -1233,6 +1476,28 @@ export default function Home() {
     : "border-zinc-200 bg-white";
   const subduedTextClass = isDark ? "text-zinc-400" : "text-zinc-500";
   const strongTextClass = isDark ? "text-zinc-100" : "text-zinc-900";
+  const primaryButtonClass = `inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-medium text-white shadow-sm transition-all duration-200 hover:bg-blue-500 active:scale-[0.98]`;
+  const dialogFieldBaseClass = `w-full rounded-xl border px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 ${
+    isDark ? "border-zinc-700 bg-zinc-950 text-zinc-200" : "border-zinc-200 bg-white text-zinc-900"
+  }`;
+  const dialogInputClass = dialogFieldBaseClass;
+  const dialogSelectClass = dialogFieldBaseClass;
+  const dialogTextareaClass = `${dialogFieldBaseClass} resize-none leading-6`;
+  const dialogCredentialInputClass = `${dialogFieldBaseClass} ${
+    isDark ? "placeholder:text-zinc-500" : "placeholder:text-zinc-400"
+  }`;
+  const pageSelectBaseClass = `appearance-none rounded-lg border text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 ${
+    isDark ? "border-zinc-700 bg-zinc-900 text-zinc-200" : "border-zinc-200 bg-white text-zinc-700"
+  }`;
+  const pageFilterButtonFocusClass = `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 ${
+    isDark ? "focus-visible:ring-offset-zinc-950" : "focus-visible:ring-offset-white"
+  } focus-visible:ring-offset-2`;
+  const createEntryCardFocusClass = `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/35 ${
+    isDark ? "focus-visible:ring-offset-zinc-950" : "focus-visible:ring-offset-white"
+  } focus-visible:ring-offset-2`;
+  const scenarioTemplateCoverUrl = `https://copilot-cn.bytedance.net/api/ide/v1/text_to_image?prompt=${encodeURIComponent(
+    "Vibrant and colorful 3D isometric icons of AI characters: a friendly robot, a wise owl teacher, a glowing heart, a colorful globe, all in bright glossy finish, vivid rainbow color palette, high saturation, studio lighting, clean and bright, no text"
+  )}&image_size=landscape_16_9`;
 
   const renderCatalogAssistantPanel = () => (
     currentSection === "orchestration" ? (
@@ -1368,19 +1633,19 @@ export default function Home() {
           <div className="mt-6 space-y-4">
             <label className="block">
               <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>MCP 名称</div>
-              <input value={toolFormState.name} onChange={(e) => setToolFormState((prev) => ({ ...prev, name: e.target.value }))} className={`w-full rounded-xl border px-3 py-2 text-sm ${isDark ? "border-zinc-700 bg-zinc-950 text-zinc-200" : "border-zinc-200 bg-white text-zinc-900"}`} />
+              <input value={toolFormState.name} onChange={(e) => setToolFormState((prev) => ({ ...prev, name: e.target.value }))} className={dialogInputClass} />
             </label>
             <label className="block">
               <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>类型</div>
-              <input value={toolFormState.type} onChange={(e) => setToolFormState((prev) => ({ ...prev, type: e.target.value }))} className={`w-full rounded-xl border px-3 py-2 text-sm ${isDark ? "border-zinc-700 bg-zinc-950 text-zinc-200" : "border-zinc-200 bg-white text-zinc-900"}`} />
+              <input value={toolFormState.type} onChange={(e) => setToolFormState((prev) => ({ ...prev, type: e.target.value }))} className={dialogInputClass} />
             </label>
             <label className="block">
               <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>Endpoint</div>
-              <input value={toolFormState.endpoint} onChange={(e) => setToolFormState((prev) => ({ ...prev, endpoint: e.target.value }))} className={`w-full rounded-xl border px-3 py-2 text-sm ${isDark ? "border-zinc-700 bg-zinc-950 text-zinc-200" : "border-zinc-200 bg-white text-zinc-900"}`} />
+              <input value={toolFormState.endpoint} onChange={(e) => setToolFormState((prev) => ({ ...prev, endpoint: e.target.value }))} className={dialogInputClass} />
             </label>
             <label className="block">
               <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>状态</div>
-              <select value={toolFormState.status} onChange={(e) => setToolFormState((prev) => ({ ...prev, status: e.target.value as ToolItem["status"] }))} className={`w-full rounded-xl border px-3 py-2 text-sm ${isDark ? "border-zinc-700 bg-zinc-950 text-zinc-200" : "border-zinc-200 bg-white text-zinc-900"}`}>
+              <select value={toolFormState.status} onChange={(e) => setToolFormState((prev) => ({ ...prev, status: e.target.value as ToolItem["status"] }))} className={dialogSelectClass}>
                 <option value="草稿">草稿</option>
                 <option value="已启用">已启用</option>
                 <option value="维护中">维护中</option>
@@ -1389,7 +1654,7 @@ export default function Home() {
           </div>
           <div className="mt-6 flex justify-end gap-3">
             <button type="button" onClick={() => setToolFormOpen(false)} className={`rounded-xl px-4 py-2 text-sm ${isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"}`}>取消</button>
-            <button type="button" onClick={handleSaveTool} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">保存</button>
+            <button type="button" onClick={handleSaveTool} className={primaryButtonClass}>保存</button>
           </div>
         </div>
       </div>
@@ -1411,24 +1676,180 @@ export default function Home() {
           <div className="mt-6 space-y-4">
             <label className="block">
               <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>Skill 名称</div>
-              <input value={skillFormState.name} onChange={(e) => setSkillFormState((prev) => ({ ...prev, name: e.target.value }))} className={`w-full rounded-xl border px-3 py-2 text-sm ${isDark ? "border-zinc-700 bg-zinc-950 text-zinc-200" : "border-zinc-200 bg-white text-zinc-900"}`} />
+              <input value={skillFormState.name} onChange={(e) => setSkillFormState((prev) => ({ ...prev, name: e.target.value }))} className={dialogInputClass} />
             </label>
             <label className="block">
               <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>分类</div>
-              <input value={skillFormState.category} onChange={(e) => setSkillFormState((prev) => ({ ...prev, category: e.target.value }))} className={`w-full rounded-xl border px-3 py-2 text-sm ${isDark ? "border-zinc-700 bg-zinc-950 text-zinc-200" : "border-zinc-200 bg-white text-zinc-900"}`} />
+              <input value={skillFormState.category} onChange={(e) => setSkillFormState((prev) => ({ ...prev, category: e.target.value }))} className={dialogInputClass} />
             </label>
             <label className="block">
               <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>模型</div>
-              <input value={skillFormState.model} onChange={(e) => setSkillFormState((prev) => ({ ...prev, model: e.target.value }))} className={`w-full rounded-xl border px-3 py-2 text-sm ${isDark ? "border-zinc-700 bg-zinc-950 text-zinc-200" : "border-zinc-200 bg-white text-zinc-900"}`} />
+              <input value={skillFormState.model} onChange={(e) => setSkillFormState((prev) => ({ ...prev, model: e.target.value }))} className={dialogInputClass} />
             </label>
           </div>
           <div className="mt-6 flex justify-end gap-3">
             <button type="button" onClick={() => setSkillFormOpen(false)} className={`rounded-xl px-4 py-2 text-sm ${isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"}`}>取消</button>
-            <button type="button" onClick={handleSaveSkill} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">保存</button>
+            <button type="button" onClick={handleSaveSkill} className={primaryButtonClass}>保存</button>
           </div>
         </div>
       </div>
     ) : null;
+
+  const renderResourceFormDialog = () => {
+    if (!resourceFormOpen) return null;
+
+    const availableTemplates = getTemplatesByKind(resourceFormState.kind);
+    const currentTemplate = getResourceProviderTemplate(resourceFormState.providerKey) ?? availableTemplates[0];
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 py-6">
+        <div className={`flex max-h-[calc(100vh-48px)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border p-6 shadow-2xl ${surfaceClass}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className={`text-lg font-semibold ${strongTextClass}`}>{resourceFormState.id ? "编辑三方资源" : "新增三方资源"}</div>
+              <div className={`mt-2 text-xs ${subduedTextClass}`}>按语音识别、大模型、语音合成分类维护典型供应商配置，智能体编辑页会直接复用这些资源。</div>
+            </div>
+            <button type="button" onClick={() => setResourceFormOpen(false)} className={`rounded-md p-1.5 ${isDark ? "hover:bg-zinc-800" : "hover:bg-zinc-100"}`}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="mt-6 min-h-0 flex-1 overflow-y-auto pr-2 space-y-6">
+            <div className="grid gap-4 md:grid-cols-3">
+              {(["LLM", "ASR", "TTS"] as ResourceKind[]).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => handleResourceKindChange(kind)}
+                  className={`rounded-2xl border p-4 text-left transition-all duration-200 ${
+                      resourceFormState.kind === kind
+                        ? isDark
+                          ? "border-blue-500/60 bg-blue-500/10 text-blue-300"
+                          : "border-blue-400 bg-blue-50 text-blue-600"
+                        : isDark
+                        ? "border-zinc-800 bg-zinc-950 text-zinc-200 hover:border-zinc-700"
+                        : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300"
+                  }`}
+                >
+                  <div className="text-sm font-semibold">{RESOURCE_KIND_LABEL[kind]}</div>
+                  <div className={`mt-2 text-xs leading-6 ${
+                    resourceFormState.kind === kind 
+                      ? isDark ? "text-blue-400/80" : "text-blue-600/70"
+                      : subduedTextClass
+                  }`}>
+                    {kind === "LLM" ? "管理大模型供应商、URL、模型名称和 API Key。" : kind === "ASR" ? "管理语音识别供应商、接入地址、模型与 token。" : "管理语音合成供应商、接入地址、音色与鉴权信息。"}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="block">
+                <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>资源名称</div>
+                <input
+                  value={resourceFormState.name}
+                  onChange={(event) => setResourceFormState((prev) => ({ ...prev, name: event.target.value }))}
+                  className={dialogInputClass}
+                  placeholder="例如：豆包生产推理 / 火山流式识别"
+                />
+              </label>
+              <label className="block">
+                <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>供应商</div>
+                <select
+                  value={resourceFormState.providerKey}
+                  onChange={(event) => handleResourceProviderChange(event.target.value)}
+                  className={dialogSelectClass}
+                >
+                  {availableTemplates.map((template) => (
+                    <option key={template.key} value={template.key}>
+                      {template.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block md:col-span-2">
+                <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>接入地址 / URL</div>
+                <input
+                  value={resourceFormState.endpoint}
+                  onChange={(event) => setResourceFormState((prev) => ({ ...prev, endpoint: event.target.value }))}
+                  className={dialogInputClass}
+                  placeholder={currentTemplate?.endpointPlaceholder}
+                />
+              </label>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              {(currentTemplate?.fields ?? []).map((field) => (
+                <label key={field.key} className="block">
+                  <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>{field.label}{field.required ? " *" : ""}</div>
+                  <input
+                    type={field.type === "password" ? "password" : "text"}
+                    value={resourceFormState.credentialValues[field.key] ?? ""}
+                    onChange={(event) =>
+                      setResourceFormState((prev) => ({
+                        ...prev,
+                        credentialValues: { ...prev.credentialValues, [field.key]: event.target.value },
+                      }))
+                    }
+                    placeholder={field.placeholder}
+                    className={dialogCredentialInputClass}
+                  />
+                </label>
+              ))}
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="block">
+                <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>{resourceFormState.kind === "TTS" ? "音色列表" : "模型列表"}</div>
+                <textarea
+                  rows={6}
+                  value={resourceFormState.kind === "TTS" ? resourceFormState.voiceLines : resourceFormState.modelLines}
+                  onChange={(event) =>
+                    setResourceFormState((prev) => ({
+                      ...prev,
+                      [prev.kind === "TTS" ? "voiceLines" : "modelLines"]: event.target.value,
+                    }))
+                  }
+                  className={dialogTextareaClass}
+                  placeholder={resourceFormState.kind === "TTS" ? "每行一个音色，格式：显示名 | voice_code" : "每行一个模型名，格式：显示名 | model_name"}
+                />
+                <div className={`mt-2 text-[11px] ${subduedTextClass}`}>支持每行 `显示名 | 实际值`；如果不写竖线，就默认显示名和值相同。</div>
+              </label>
+              <div className="space-y-4">
+                <label className="block">
+                  <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>状态</div>
+                  <select
+                    value={resourceFormState.status}
+                    onChange={(event) => setResourceFormState((prev) => ({ ...prev, status: event.target.value as ThirdPartyResourceItem["status"] }))}
+                    className={dialogSelectClass}
+                  >
+                    <option value="草稿">草稿</option>
+                    <option value="已启用">已启用</option>
+                    <option value="停用">停用</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>备注</div>
+                  <textarea
+                    rows={6}
+                    value={resourceFormState.notes}
+                    onChange={(event) => setResourceFormState((prev) => ({ ...prev, notes: event.target.value }))}
+                    className={dialogTextareaClass}
+                    placeholder="记录用途、环境、配额或切换说明"
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 flex justify-end gap-3">
+            <button type="button" onClick={() => setResourceFormOpen(false)} className={`rounded-xl px-4 py-2 text-sm ${isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"}`}>取消</button>
+            <button type="button" onClick={handleSaveResource} className={primaryButtonClass}>保存资源</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderAgentCreateEntryDialog = () =>
     agentCreateEntryOpen ? (
@@ -1450,24 +1871,47 @@ export default function Home() {
                 title: "场景模板",
                 description: "从预设场景模板快速创建，直接复用模型、音色和高级功能开通。",
                 action: handleSelectAgentTemplate,
+                coverUrl: scenarioTemplateCoverUrl,
               },
               {
                 key: "custom",
                 title: "自定义",
                 description: "仅输入名称先创建一个空白智能体，然后进入编排调试页继续完善。",
                 action: handleSelectCustomAgent,
+                coverUrl: "",
               },
             ].map((item) => (
               <button
                 key={item.key}
                 type="button"
                 onClick={item.action}
-                className={`rounded-2xl border p-5 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
-                  isDark ? "border-zinc-800 bg-zinc-950 hover:border-zinc-700" : "border-zinc-200 bg-white hover:border-zinc-300"
+                className={`relative overflow-hidden rounded-2xl border p-5 text-left transition-all hover:-translate-y-0.5 ${createEntryCardFocusClass} ${
+                  isDark
+                    ? "border-zinc-800 bg-zinc-950 hover:border-blue-500/40 hover:shadow-[0_0_0_1px_rgba(59,130,246,0.18),0_18px_40px_rgba(37,99,235,0.16)]"
+                    : "border-zinc-200 bg-white hover:border-blue-300 hover:shadow-[0_0_0_1px_rgba(96,165,250,0.3),0_18px_40px_rgba(96,165,250,0.18)]"
                 }`}
               >
-                <div className={`text-base font-semibold ${strongTextClass}`}>{item.title}</div>
-                <div className={`mt-3 text-xs leading-6 ${subduedTextClass}`}>{item.description}</div>
+                {item.coverUrl ? (
+                  <>
+                    <div
+                      className="absolute inset-0 bg-cover bg-center opacity-100"
+                      style={{ backgroundImage: `url("${item.coverUrl}")` }}
+                      aria-hidden="true"
+                    />
+                    <div
+                      className={`absolute inset-0 ${
+                        isDark
+                          ? "bg-[linear-gradient(90deg,rgba(9,9,11,1)_10%,rgba(9,9,11,0.4)_25%,transparent_45%)]"
+                          : "bg-[linear-gradient(90deg,rgba(255,255,255,1)_10%,rgba(255,255,255,0.4)_25%,transparent_45%)]"
+                      }`}
+                      aria-hidden="true"
+                    />
+                  </>
+                ) : null}
+                <div className="relative z-10">
+                  <div className={`text-base font-semibold ${strongTextClass}`}>{item.title}</div>
+                  <div className={`mt-3 text-xs leading-6 ${subduedTextClass}`}>{item.description}</div>
+                </div>
               </button>
             ))}
           </div>
@@ -1475,225 +1919,255 @@ export default function Home() {
       </div>
     ) : null;
 
-  const renderAgentTemplateDialog = () =>
-    agentTemplateDialogOpen ? (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 py-6">
-        <div className={`flex max-h-[calc(100vh-48px)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border p-6 shadow-2xl ${surfaceClass}`}>
-          <div className="flex shrink-0 items-start justify-between gap-4">
-            <div>
-              <div className={`text-lg font-semibold ${strongTextClass}`}>选择场景模板</div>
-              <div className={`mt-2 text-xs ${subduedTextClass}`}>选择模板后可查看模型、音色、高级功能、工具与 Skill 配置，再决定是否直接复用。</div>
-            </div>
-            <button type="button" onClick={() => setAgentTemplateDialogOpen(false)} className={`rounded-md p-1.5 ${isDark ? "hover:bg-zinc-800" : "hover:bg-zinc-100"}`}>
-              <X className="h-4 w-4" />
-            </button>
+  const renderAgentTemplatePage = () => (
+    <div className={`h-full w-full overflow-hidden flex flex-col transition-colors ${
+      isDark ? "bg-zinc-950 text-white" : "bg-zinc-50 text-zinc-900"
+    }`}>
+      <header className={`h-14 flex items-center px-4 shrink-0 transition-colors z-20 relative shadow-sm ${
+        isDark ? "bg-zinc-950 border-b border-zinc-800" : "bg-white border-b border-zinc-200"
+      }`}>
+        <div className="flex items-center gap-3">
+          <button
+            className={`p-1.5 -ml-1 rounded-md transition-colors ${
+              isDark ? "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800" : "text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100"
+            }`}
+            title="返回智能体列表"
+            onClick={closeAgentTemplatePage}
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-cyan-500 flex items-center justify-center text-white text-sm font-bold shadow-sm">
+            <Bot className="w-4 h-4" />
           </div>
-          <div className="mt-6 grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)] gap-5">
-            <div className={`min-h-0 overflow-y-auto pr-2 [scrollbar-gutter:stable] space-y-3 [scrollbar-width:thin] ${
-              isDark ? "[scrollbar-color:#3f3f46_transparent]" : "[scrollbar-color:#d4d4d8_transparent]"
-            } [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full ${
-              isDark ? "[&::-webkit-scrollbar-thumb]:bg-zinc-700/70" : "[&::-webkit-scrollbar-thumb]:bg-zinc-300/90"
-            }`}>
-              {agentTemplates.map((template, index) => {
-                const active = template.id === selectedAgentTemplateId;
-                const cardThemes = [
-                  {
-                    glow: isDark ? "from-blue-500/20 via-cyan-500/10 to-zinc-950" : "from-blue-50 via-cyan-50 to-white",
-                  },
-                  {
-                    glow: isDark ? "from-pink-500/20 via-violet-500/10 to-zinc-950" : "from-pink-50 via-violet-50 to-white",
-                  },
-                  {
-                    glow: isDark ? "from-purple-500/20 via-rose-500/10 to-zinc-950" : "from-purple-50 via-rose-50 to-white",
-                  },
-                  {
-                    glow: isDark ? "from-orange-500/20 via-amber-500/10 to-zinc-950" : "from-orange-50 via-amber-50 to-white",
-                  },
-                  {
-                    glow: isDark ? "from-cyan-500/20 via-sky-500/10 to-zinc-950" : "from-cyan-50 via-sky-50 to-white",
-                  },
-                ];
-                const currentTheme = cardThemes[index % cardThemes.length];
-                return (
-                  <button
-                    key={template.id}
-                    type="button"
-                    onClick={() => setSelectedAgentTemplateId(template.id)}
-                    className={`w-full rounded-2xl border p-0 text-left transition-all overflow-hidden ${
-                      active
-                        ? isDark
-                          ? "border-blue-500/60 bg-blue-500/10 shadow-md shadow-blue-500/10"
-                          : "border-blue-300 bg-blue-50 shadow-sm"
-                        : isDark
-                          ? "border-zinc-800 bg-zinc-950 hover:border-zinc-700"
-                          : "border-zinc-200 bg-white hover:border-zinc-300"
-                    }`}
-                  >
-                    <div className={`bg-gradient-to-br px-4 py-3 ${currentTheme.glow}`}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className={`text-sm font-semibold ${strongTextClass}`}>{template.name}</div>
-                          <div className={`mt-1 text-xs ${subduedTextClass}`}>{template.summary}</div>
-                        </div>
-                        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${
-                          active
-                            ? "bg-blue-600 text-white"
-                            : isDark
-                              ? "bg-zinc-900/80 text-zinc-300"
-                              : "bg-white/90 text-zinc-600"
-                        }`}>
-                          <Bot className="h-4 w-4" />
-                        </div>
-                      </div>
-                    </div>
-                    <div className={`border-t px-4 py-3 ${isDark ? "border-zinc-800 bg-zinc-950" : "border-zinc-100 bg-white"}`}>
-                      <div className="space-y-2">
-                        {[
-                          { label: "使用场景", value: template.scene },
-                          { label: "模型", value: formatModelLabel(template.model) },
-                          { label: "音色", value: formatVoiceLabel(template.voice) },
-                        ].map((item) => (
-                          <div key={item.label} className="flex items-start gap-2 text-[11px] leading-5">
-                            <span className={`shrink-0 ${subduedTextClass}`}>{item.label}</span>
-                            <span className={`min-w-0 flex-1 ${strongTextClass}`}>{item.value}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className={`mt-2 flex items-center justify-end text-[11px] ${subduedTextClass}`}>
-                        <span>{active ? "查看中" : "查看详情"}</span>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
+        </div>
+
+        <div className="flex-1 min-w-[120px] ml-3 flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className={`text-[15px] font-semibold tracking-wide ${isDark ? "text-zinc-100" : "text-zinc-800"}`}>
+              选择场景模板
             </div>
-            <div className={`min-h-0 overflow-y-auto pr-2 [scrollbar-gutter:stable] [scrollbar-width:thin] ${
+            <div className={`mt-0.5 text-[11px] ${subduedTextClass}`}>
+              左侧浏览模板详情，右侧直接预览通话效果，整个交互与智能体编排保持一致。
+            </div>
+          </div>
+          <button type="button" onClick={handleUseAgentTemplate} className={primaryButtonClass}>使用该模板</button>
+        </div>
+      </header>
+
+      <div className="flex-1 overflow-hidden">
+        <Group orientation="horizontal" className="h-full w-full">
+          <Panel defaultSize={64} minSize={30} className="relative z-10">
+            <div className={`h-full overflow-y-auto px-6 py-6 md:px-8 [scrollbar-width:thin] ${
               isDark ? "[scrollbar-color:#3f3f46_transparent]" : "[scrollbar-color:#d4d4d8_transparent]"
-            } [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full ${
-              isDark ? "[&::-webkit-scrollbar-thumb]:bg-zinc-700/70" : "[&::-webkit-scrollbar-thumb]:bg-zinc-300/90"
             }`}>
-              <div className={`rounded-2xl border p-5 ${
-                isDark
-                  ? "border-blue-500/20 bg-gradient-to-br from-blue-500/10 via-zinc-950 to-zinc-950"
-                  : "border-blue-100 bg-gradient-to-br from-blue-50 via-white to-violet-50"
-              }`}>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="rounded-full bg-blue-600 px-2.5 py-1 text-[11px] font-medium text-white">场景模板</span>
-                      <span className={`text-[11px] ${subduedTextClass}`}>适合快速创建</span>
+              <div className="mx-auto max-w-5xl space-y-5">
+                <div>
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className={`text-sm font-semibold ${strongTextClass}`}>模板列表</div>
+                      <div className={`mt-1 text-xs ${subduedTextClass}`}>选择一个场景模板，右侧会同步更新预览效果。</div>
                     </div>
-                    <div className={`mt-4 text-xl font-semibold ${strongTextClass}`}>{selectedAgentTemplate.name}</div>
-                    <div className={`mt-2 text-sm ${subduedTextClass}`}>{selectedAgentTemplate.summary}</div>
+                    <div className={`shrink-0 text-[11px] ${subduedTextClass}`}>{agentTemplates.length} 个模板</div>
                   </div>
-                  <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
-                    isDark ? "bg-blue-500/15 text-blue-300" : "bg-blue-100 text-blue-600"
-                  }`}>
-                    <Bot className="h-5 w-5" />
+
+                  <div className="mt-4 flex gap-3 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    {agentTemplates.map((template, index) => {
+                      const active = template.id === selectedAgentTemplateId;
+                      const cardThemes = [
+                        { glow: isDark ? "from-blue-500/20 via-cyan-500/10 to-zinc-950" : "from-blue-50 via-cyan-50 to-white" },
+                        { glow: isDark ? "from-pink-500/20 via-violet-500/10 to-zinc-950" : "from-pink-50 via-violet-50 to-white" },
+                        { glow: isDark ? "from-purple-500/20 via-rose-500/10 to-zinc-950" : "from-purple-50 via-rose-50 to-white" },
+                        { glow: isDark ? "from-orange-500/20 via-amber-500/10 to-zinc-950" : "from-orange-50 via-amber-50 to-white" },
+                        { glow: isDark ? "from-cyan-500/20 via-sky-500/10 to-zinc-950" : "from-cyan-50 via-sky-50 to-white" },
+                      ];
+                      const currentTheme = cardThemes[index % cardThemes.length];
+
+                      return (
+                        <button
+                          key={template.id}
+                          type="button"
+                          onClick={() => setSelectedAgentTemplateId(template.id)}
+                          className={`min-w-[220px] max-w-[220px] rounded-2xl bg-gradient-to-br px-4 py-3 text-left transition-all ${
+                            currentTheme.glow
+                          } ${
+                            active
+                              ? isDark
+                                ? "shadow-[0_10px_30px_rgba(59,130,246,0.16)]"
+                                : "shadow-[0_10px_30px_rgba(96,165,250,0.18)]"
+                              : isDark
+                                ? "hover:shadow-[0_8px_24px_rgba(24,24,27,0.36)]"
+                                : "hover:shadow-[0_8px_24px_rgba(148,163,184,0.18)]"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className={`text-sm font-semibold ${strongTextClass}`}>{template.name}</div>
+                              <div className={`mt-0.5 line-clamp-1 text-[11px] ${subduedTextClass}`}>{template.summary}</div>
+                            </div>
+                            {active ? (
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                                isDark ? "bg-blue-500/15 text-blue-300" : "bg-blue-100 text-blue-600"
+                              }`}>
+                                当前
+                              </span>
+                            ) : (
+                              <Bot className={`h-4 w-4 shrink-0 ${isDark ? "text-zinc-500" : "text-zinc-400"}`} />
+                            )}
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {template.scene
+                              .split("、")
+                              .map((scene) => scene.trim())
+                              .filter(Boolean)
+                              .map((scene) => (
+                                <span
+                                  key={scene}
+                                  className={`rounded-full px-2 py-0.5 text-[10px] leading-4 ${
+                                    isDark ? "bg-zinc-950/70 text-zinc-300" : "bg-white/80 text-zinc-600"
+                                  }`}
+                                >
+                                  {scene}
+                                </span>
+                              ))}
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
-                <div className={`mt-4 text-[13px] leading-6 ${subduedTextClass}`}>{selectedAgentTemplate.description}</div>
-                <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                  {[
-                    { icon: Settings2, label: "模型", value: formatModelLabel(selectedAgentTemplate.model) },
-                    { icon: AudioLines, label: "音色", value: formatVoiceLabel(selectedAgentTemplate.voice) },
-                  ].map((item) => {
-                    const Icon = item.icon;
-                    return (
+
+                <div className={`rounded-2xl border p-5 ${
+                  isDark
+                    ? "border-blue-500/20 bg-gradient-to-br from-blue-500/10 via-zinc-950 to-zinc-950"
+                    : "border-blue-100 bg-gradient-to-br from-blue-50 via-white to-violet-50"
+                }`}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-blue-600 px-2.5 py-1 text-[11px] font-medium text-white">场景模板</span>
+                        <span className={`text-[11px] ${subduedTextClass}`}>右侧实时预览</span>
+                      </div>
+                      <div className={`mt-4 text-xl font-semibold ${strongTextClass}`}>{selectedAgentTemplate.name}</div>
+                      <div className={`mt-2 text-sm ${subduedTextClass}`}>{selectedAgentTemplate.summary}</div>
+                    </div>
+                    <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
+                      isDark ? "bg-blue-500/15 text-blue-300" : "bg-blue-100 text-blue-600"
+                    }`}>
+                      <Bot className="h-5 w-5" />
+                    </div>
+                  </div>
+                  <div className={`mt-4 text-[13px] leading-6 ${subduedTextClass}`}>{selectedAgentTemplate.description}</div>
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    {[
+                      { icon: Settings2, label: "模型", value: formatManagedModelLabel(selectedAgentTemplate.model) },
+                      { icon: AudioLines, label: "音色", value: formatManagedVoiceLabel(selectedAgentTemplate.voice) },
+                    ].map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <div
+                          key={item.label}
+                          className={`rounded-xl border px-4 py-3 ${
+                            isDark ? "border-zinc-800 bg-zinc-950/80" : "border-white/80 bg-white/80"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <Icon className={`h-4 w-4 ${isDark ? "text-zinc-400" : "text-zinc-500"}`} />
+                            <span className={`text-xs ${subduedTextClass}`}>{item.label}</span>
+                          </div>
+                          <div className={`mt-2 break-words text-[13px] leading-6 ${strongTextClass}`}>{item.value}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-3 grid gap-3">
+                    {[
+                      { label: "Prompt", value: selectedAgentTemplate.prompt },
+                      { label: "欢迎语", value: selectedAgentTemplate.welcomeMessage },
+                    ].map((item) => (
                       <div
                         key={item.label}
                         className={`rounded-xl border px-4 py-3 ${
                           isDark ? "border-zinc-800 bg-zinc-950/80" : "border-white/80 bg-white/80"
                         }`}
                       >
-                        <div className="flex items-center gap-2">
-                          <Icon className={`h-4 w-4 ${isDark ? "text-zinc-400" : "text-zinc-500"}`} />
-                          <span className={`text-xs ${subduedTextClass}`}>{item.label}</span>
+                        <div className={`text-xs ${subduedTextClass}`}>{item.label}</div>
+                        <div className={`mt-2 text-[13px] leading-6 ${strongTextClass}`}>{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {[
+                    {
+                      title: "高级功能",
+                      description: "默认启用的互动与智能能力",
+                      values: selectedAgentTemplate.features,
+                      icon: ShieldCheck,
+                    },
+                    {
+                      title: "工具",
+                      description: "可直接调用的外部能力与 MCP 工具",
+                      values: selectedAgentTemplate.tools,
+                      icon: Boxes,
+                    },
+                    {
+                      title: "Skill",
+                      description: "模板内置的推理与处理能力",
+                      values: selectedAgentTemplate.skills,
+                      icon: GitBranch,
+                    },
+                  ].map((group) => {
+                    const Icon = group.icon;
+                    return (
+                      <div key={group.title} className={`rounded-xl border p-4 ${isDark ? "border-zinc-800 bg-zinc-900/40" : "border-zinc-200 bg-white/90"}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <Icon className={`h-4 w-4 ${isDark ? "text-zinc-400" : "text-zinc-500"}`} />
+                              <div className={`text-sm font-medium ${strongTextClass}`}>{group.title}</div>
+                            </div>
+                            <div className={`mt-1 text-xs ${subduedTextClass}`}>{group.description}</div>
+                          </div>
+                          <span className={`rounded-full px-2 py-0.5 text-[11px] ${isDark ? "bg-zinc-800 text-zinc-300" : "bg-zinc-100 text-zinc-500"}`}>
+                            {group.values.length} 项
+                          </span>
                         </div>
-                        <div className={`mt-2 break-words text-[13px] leading-6 ${strongTextClass}`}>{item.value}</div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {group.values.map((value) => (
+                            <span
+                              key={value}
+                              className={`rounded-full border px-3 py-1 text-xs ${
+                                isDark ? "border-zinc-700 bg-zinc-950 text-zinc-300" : "border-zinc-200 bg-zinc-50 text-zinc-600"
+                              }`}
+                            >
+                              {value}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     );
                   })}
                 </div>
-                <div className="mt-3 grid gap-3">
-                  {[
-                    { label: "Prompt", value: selectedAgentTemplate.prompt },
-                    { label: "欢迎语", value: selectedAgentTemplate.welcomeMessage },
-                  ].map((item) => (
-                    <div
-                      key={item.label}
-                      className={`rounded-xl border px-4 py-3 ${
-                        isDark ? "border-zinc-800 bg-zinc-950/80" : "border-white/80 bg-white/80"
-                      }`}
-                    >
-                      <div className={`text-xs ${subduedTextClass}`}>{item.label}</div>
-                      <div className={`mt-2 text-[13px] leading-6 ${strongTextClass}`}>{item.value}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-5 space-y-4">
-                {[
-                  {
-                    title: "高级功能",
-                    description: "默认启用的互动与智能能力",
-                    values: selectedAgentTemplate.features,
-                    icon: ShieldCheck,
-                  },
-                  {
-                    title: "工具",
-                    description: "可直接调用的外部能力与 MCP 工具",
-                    values: selectedAgentTemplate.tools,
-                    icon: Boxes,
-                  },
-                  {
-                    title: "Skill",
-                    description: "模板内置的推理与处理能力",
-                    values: selectedAgentTemplate.skills,
-                    icon: GitBranch,
-                  },
-                ].map((group) => {
-                  const Icon = group.icon;
-                  return (
-                    <div key={group.title} className={`rounded-xl border p-4 ${isDark ? "border-zinc-800 bg-zinc-900/40" : "border-zinc-200 bg-white/90"}`}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <Icon className={`h-4 w-4 ${isDark ? "text-zinc-400" : "text-zinc-500"}`} />
-                            <div className={`text-sm font-medium ${strongTextClass}`}>{group.title}</div>
-                          </div>
-                          <div className={`mt-1 text-xs ${subduedTextClass}`}>{group.description}</div>
-                        </div>
-                        <span className={`rounded-full px-2 py-0.5 text-[11px] ${isDark ? "bg-zinc-800 text-zinc-300" : "bg-zinc-100 text-zinc-500"}`}>
-                          {group.values.length} 项
-                        </span>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {group.values.map((value) => (
-                          <span
-                            key={value}
-                            className={`rounded-full border px-3 py-1 text-xs ${
-                              isDark ? "border-zinc-700 bg-zinc-950 text-zinc-300" : "border-zinc-200 bg-zinc-50 text-zinc-600"
-                            }`}
-                          >
-                            {value}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="mt-6 flex justify-end gap-3">
-                <button type="button" onClick={() => setAgentTemplateDialogOpen(false)} className={`rounded-xl px-4 py-2 text-sm ${isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"}`}>取消</button>
-                <button type="button" onClick={handleUseAgentTemplate} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">使用该模板</button>
               </div>
             </div>
-          </div>
-        </div>
+          </Panel>
+
+          <Separator className="relative w-2 cursor-col-resize group flex items-center justify-center z-20">
+            <div className={`w-[1px] h-full transition-all duration-300 ease-out ${
+              isDark
+                ? "bg-zinc-800 group-hover:bg-blue-500 group-hover:shadow-[0_0_8px_rgba(59,130,246,0.8)] group-active:bg-blue-400"
+                : "bg-zinc-200 group-hover:bg-blue-400 group-hover:shadow-[0_0_8px_rgba(96,165,250,0.6)] group-active:bg-blue-500"
+            }`} />
+          </Separator>
+
+          <Panel defaultSize={36} minSize={24} className="relative z-10">
+            <PreviewPanel onOpenAssistant={() => ensureCatalogAssistantOpen("agent")} />
+          </Panel>
+        </Group>
       </div>
-    ) : null;
+    </div>
+  );
 
   const renderAgentNameDialog = () =>
     agentNameDialogMode ? (
@@ -1733,7 +2207,7 @@ export default function Home() {
                     handleConfirmAgentName();
                   }
                 }}
-                className={`w-full rounded-xl border px-3 py-2.5 text-sm ${isDark ? "border-zinc-700 bg-zinc-950 text-zinc-200" : "border-zinc-200 bg-white text-zinc-900"}`}
+                className={dialogInputClass}
               />
             </label>
             <label className="block">
@@ -1742,7 +2216,7 @@ export default function Home() {
                 value={agentDescriptionInput}
                 onChange={(event) => setAgentDescriptionInput(event.target.value)}
                 rows={3}
-                className={`w-full resize-none rounded-xl border px-3 py-2.5 text-sm leading-6 ${isDark ? "border-zinc-700 bg-zinc-950 text-zinc-200" : "border-zinc-200 bg-white text-zinc-900"}`}
+                className={dialogTextareaClass}
                 placeholder="输入智能体描述"
               />
             </label>
@@ -1758,7 +2232,47 @@ export default function Home() {
             >
               取消
             </button>
-            <button type="button" onClick={handleConfirmAgentName} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">确认保存</button>
+            <button type="button" onClick={handleConfirmAgentName} className={primaryButtonClass}>确认保存</button>
+          </div>
+        </div>
+      </div>
+    ) : null;
+
+  const renderDeleteAgentDialog = () =>
+    pendingDeleteAgent ? (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
+        <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${surfaceClass}`}>
+          <div className="flex items-start gap-4">
+            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${
+              isDark ? "bg-red-500/10 text-red-300" : "bg-red-50 text-red-500"
+            }`}>
+              <Trash2 className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className={`text-lg font-semibold ${strongTextClass}`}>删除智能体</div>
+              <div className={`mt-2 text-sm leading-6 ${subduedTextClass}`}>
+                确认删除智能体“{pendingDeleteAgent.name}”吗？删除后将从当前列表中移除。
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-8 flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setPendingDeleteAgent(null)}
+              className={`rounded-xl px-4 py-2 text-sm ${isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"}`}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDeleteAgent}
+              className={`rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
+                isDark ? "bg-red-500/10 text-red-300 hover:bg-red-500/15" : "bg-red-50 text-red-500 hover:bg-red-100"
+              }`}
+            >
+              确认删除
+            </button>
           </div>
         </div>
       </div>
@@ -1775,9 +2289,16 @@ export default function Home() {
               : "border-zinc-200 bg-white shadow-sm hover:border-blue-300 hover:shadow-[0_0_0_1px_rgba(96,165,250,0.35),0_18px_40px_rgba(96,165,250,0.18)]"
           }`}
         >
-          <button
-            type="button"
+          <div
+            role="button"
+            tabIndex={0}
             onClick={() => openAgent(agent)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openAgent(agent);
+              }
+            }}
             className="flex h-full w-full flex-1 flex-col text-left"
           >
             <div className={`bg-gradient-to-br px-4 py-2.5 ${
@@ -1786,15 +2307,30 @@ export default function Home() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className={`text-sm font-semibold ${strongTextClass}`}>{agent.name}</div>
-                  <div className={`mt-1 text-xs ${subduedTextClass}`}>BotId：{agent.botId}</div>
+                  <div className={`mt-1 inline-flex items-center gap-1.5 text-xs ${subduedTextClass}`}>
+                    <span>{`BotId：${agent.botId}`}</span>
+                    <button
+                      type="button"
+                      onClick={(event) => void handleCopyAgentBotId(event, agent.id, agent.botId)}
+                      className={`inline-flex h-5 w-5 items-center justify-center rounded transition-colors ${
+                        isDark
+                          ? "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                          : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                      }`}
+                      title={copiedAgentId === agent.id ? "已复制" : "复制 BotId"}
+                      aria-label={copiedAgentId === agent.id ? "已复制" : "复制 BotId"}
+                    >
+                      {copiedAgentId === agent.id ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
             <div className={`flex flex-1 flex-col justify-between border-t px-4 py-2.5 ${isDark ? "border-zinc-800 bg-zinc-950" : "border-zinc-100 bg-white"}`}>
               <div className="space-y-2">
                 {[
-                  { label: "模型", value: formatModelLabel(agent.model) },
-                  { label: "音色", value: formatVoiceLabel(agent.voice) },
+                  { label: "模型", value: formatManagedModelLabel(agent.model) },
+                  { label: "音色", value: formatManagedVoiceLabel(agent.voice) },
                 ].map((item) => (
                   <div key={item.label} className="flex items-start gap-2 text-[11px] leading-5">
                     <span className={`shrink-0 ${subduedTextClass}`}>{item.label}</span>
@@ -1806,9 +2342,12 @@ export default function Home() {
                 <span>{`最后更新于 ${agent.updatedAt}`}</span>
               </div>
             </div>
-          </button>
+          </div>
           <button
             type="button"
+            data-agent-action-menu="true"
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
               setAgentActionMenuId((current) => (current === agent.id ? null : agent.id));
@@ -1825,25 +2364,33 @@ export default function Home() {
           </button>
           {agentActionMenuId === agent.id ? (
             <div
-              className={`absolute right-3 top-11 z-10 min-w-[96px] rounded-lg border p-1 shadow-lg ${
-                isDark ? "border-zinc-800 bg-zinc-950/98" : "border-zinc-200 bg-white/98"
+              data-agent-action-menu="true"
+              className={`absolute right-3 top-11 z-10 min-w-[100px] overflow-hidden rounded-lg border shadow-xl animate-in fade-in zoom-in-95 duration-100 ${
+                isDark 
+                  ? "border-zinc-800 bg-zinc-950/95 backdrop-blur-md" 
+                  : "border-zinc-200 bg-white/95 backdrop-blur-md"
               }`}
+              onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
             >
               <button
                 type="button"
-                onClick={() => {
+                data-agent-action-menu="true"
+                onPointerDown={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
                   setAgentActionMenuId(null);
                   handleDeleteAgent(agent);
                 }}
-                className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ${
+                className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors ${
                   isDark
-                    ? "text-zinc-300 hover:bg-zinc-900 hover:text-red-300"
-                    : "text-zinc-700 hover:bg-zinc-50 hover:text-red-500"
+                    ? "text-red-400 hover:text-red-300"
+                    : "text-red-500 hover:text-red-600"
                 }`}
               >
-                <Trash2 className="h-4 w-4" />
-                <span>删除</span>
+                <Trash2 className="h-3.5 w-3.5" />
+                <span className="font-medium">删除</span>
               </button>
             </div>
           ) : null}
@@ -2312,7 +2859,7 @@ export default function Home() {
         <div key={item.title} className={`rounded-2xl border p-5 shadow-sm ${surfaceClass}`}>
           <div className={`text-base font-semibold ${strongTextClass}`}>{item.title}</div>
           <div className={`mt-2 text-xs leading-6 ${subduedTextClass}`}>{item.desc}</div>
-          <button type="button" onClick={() => window.alert(`${item.title}\n\n${item.desc}`)} className="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-700">{item.action}</button>
+          <button type="button" onClick={() => window.alert(`${item.title}\n\n${item.desc}`)} className={`mt-5 ${primaryButtonClass} px-4 py-2 text-xs`}>{item.action}</button>
         </div>
       ))}
     </div>
@@ -2407,7 +2954,7 @@ export default function Home() {
               </div>
               <span className={`rounded-full px-3 py-1 text-xs ${item.status === "已启用" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300" : "bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300"}`}>{item.status}</span>
             </div>
-            <button type="button" onClick={() => window.alert(`${item.title}\n\n${item.detail}`)} className="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-700">{item.action}</button>
+            <button type="button" onClick={() => window.alert(`${item.title}\n\n${item.detail}`)} className={`mt-5 ${primaryButtonClass} px-4 py-2 text-xs`}>{item.action}</button>
           </div>
         ))}
       </div>
@@ -2555,11 +3102,7 @@ export default function Home() {
             <select
               value={selectedFeatureAppId}
               onChange={(event) => setSelectedFeatureAppId(event.target.value)}
-              className={`h-10 w-full appearance-none rounded-lg border px-3 pr-9 text-xs outline-none ${
-                isDark
-                  ? "border-zinc-700 bg-zinc-900 text-zinc-200"
-                  : "border-zinc-200 bg-white text-zinc-700"
-              }`}
+              className={`h-10 w-full px-3 pr-9 outline-none ${pageSelectBaseClass}`}
             >
               <option value="小龙虾(69dc5e0f1fc5bf017632e7b4)">小龙虾(69dc5e0f1fc5bf017632e7b4)</option>
               <option value="直播互动助手(app_10001)">直播互动助手(app_10001)</option>
@@ -2575,7 +3118,7 @@ export default function Home() {
               key={tab.key}
               type="button"
               onClick={() => setActiveFeatureTab(tab.key)}
-              className={`rounded-lg border px-3 py-2 text-xs transition-colors ${
+              className={`rounded-lg border px-3 py-2 text-xs transition-colors ${pageFilterButtonFocusClass} ${
                 activeFeatureTab === tab.key
                   ? isDark
                     ? "border-blue-500/60 bg-blue-500/10 text-blue-300"
@@ -2660,24 +3203,128 @@ export default function Home() {
   };
 
   const renderResourcePackages = () => (
-    <div className="space-y-4">
-      {resourcePackageList.map((item) => (
-        <div key={item.id} className={`rounded-2xl border p-5 shadow-sm ${surfaceClass}`}>
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className={`text-base font-semibold ${strongTextClass}`}>{item.name}</div>
-              <div className={`mt-2 text-xs ${subduedTextClass}`}>额度：{item.quota}</div>
-              <div className={`mt-2 text-xs ${subduedTextClass}`}>到期时间：{item.expireAt}</div>
+    <div className="space-y-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {[
+          { label: "资源总数", value: String(resourceList.length), hint: "已统一托管" },
+          { label: "大模型资源", value: String(resourceList.filter((item) => item.kind === "LLM").length), hint: "模型接入点" },
+          { label: "语音识别资源", value: String(resourceList.filter((item) => item.kind === "ASR").length), hint: "语音识别链路" },
+          { label: "语音合成资源", value: String(resourceList.filter((item) => item.kind === "TTS").length), hint: "音色与合成" },
+        ].map((metric) => (
+          <div key={metric.label} className={`rounded-2xl border p-5 ${surfaceClass}`}>
+            <div className={`text-xs ${subduedTextClass}`}>{metric.label}</div>
+            <div className={`mt-3 text-2xl font-semibold ${strongTextClass}`}>{metric.value}</div>
+            <div className={`mt-2 text-xs ${subduedTextClass}`}>{metric.hint}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className={`rounded-2xl border p-4 ${surfaceClass}`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-2">
+            <div className={`text-sm font-semibold ${strongTextClass}`}>按类型查看</div>
+            <div className="flex flex-wrap gap-2">
+              {(["全部", "LLM", "ASR", "TTS"] as ResourceFilter[]).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setResourceFilter(item)}
+                  className={`rounded-full border px-3 py-1.5 text-xs transition-all duration-200 ${pageFilterButtonFocusClass} ${
+                      resourceFilter === item
+                        ? isDark
+                          ? "border-blue-500/60 bg-blue-500/15 text-blue-300"
+                          : "border-blue-400 bg-blue-50 text-blue-600"
+                        : isDark
+                        ? "border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+                        : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+                  }`}
+                >
+                  {item === "全部" ? item : RESOURCE_KIND_LABEL[item]}
+                </button>
+              ))}
             </div>
-            <span className={`rounded-full px-3 py-1 text-xs ${item.status === "生效中" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300" : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"}`}>{item.status}</span>
           </div>
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button type="button" onClick={() => handleEditResourcePackage(item)} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-xs ${isDark ? "border-zinc-700 text-zinc-200 hover:bg-zinc-800" : "border-zinc-200 text-zinc-700 hover:bg-zinc-50"}`}><Pencil className="h-4 w-4" />编辑</button>
-            <button type="button" onClick={() => window.alert(`资源包详情\n\n名称：${item.name}\n额度：${item.quota}\n到期：${item.expireAt}`)} className={`rounded-lg border px-4 py-2 text-xs ${isDark ? "border-zinc-700 text-zinc-200 hover:bg-zinc-800" : "border-zinc-200 text-zinc-700 hover:bg-zinc-50"}`}>查看</button>
-            <button type="button" onClick={() => handleDeleteResourcePackage(item)} className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-xs text-red-500 hover:bg-red-50 dark:border-red-500/20 dark:text-red-300 dark:hover:bg-red-500/10"><Trash2 className="h-4 w-4" />删除</button>
-          </div>
+          <div className={`text-xs ${subduedTextClass}`}>智能体编辑页会直接复用这里维护的供应商、模型和音色选项。</div>
         </div>
-      ))}
+      </div>
+
+      <div className="space-y-4">
+        {filteredResourceBindings.map(({ resource, boundAgents }) => {
+          const template = getResourceProviderTemplate(resource.providerKey);
+          const capabilityLabel =
+            resource.kind === "TTS"
+              ? resource.voiceOptions.map((item) => item.label).join("、")
+              : resource.modelOptions.map((item) => item.value).join("、");
+          return (
+            <div key={resource.id} className={`rounded-2xl border p-5 shadow-sm ${surfaceClass}`}>
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className={`text-base font-semibold ${strongTextClass}`}>{resource.name}</div>
+                    <span className={`rounded-full px-2.5 py-1 text-[11px] ${isDark ? "bg-zinc-800 text-zinc-300" : "bg-zinc-100 text-zinc-600"}`}>
+                      {RESOURCE_KIND_LABEL[resource.kind]}
+                    </span>
+                    <span className={`rounded-full px-2.5 py-1 text-[11px] ${resource.status === "已启用" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300" : resource.status === "停用" ? "bg-red-50 text-red-500 dark:bg-red-500/10 dark:text-red-300" : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"}`}>
+                      {resource.status}
+                    </span>
+                  </div>
+                  <div className={`mt-2 text-xs ${subduedTextClass}`}>{resource.providerLabel} · {template?.description}</div>
+                  <div className={`mt-2 text-xs break-all ${subduedTextClass}`}>接入地址：{resource.endpoint}</div>
+                </div>
+                <div className={`text-right text-xs ${subduedTextClass}`}>
+                  <div>最近更新：{resource.updatedAt}</div>
+                  <div className="mt-2">被 {boundAgents.length} 个智能体引用</div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-4 xl:grid-cols-[1.1fr_1fr_1fr]">
+                <div className={`rounded-xl border p-4 ${isDark ? "border-zinc-800 bg-zinc-950" : "border-zinc-200 bg-zinc-50/70"}`}>
+                  <div className={`text-xs font-medium ${subduedTextClass}`}>典型填写项</div>
+                  <div className="mt-3 space-y-2 text-xs">
+                    {(template?.fields ?? []).map((field) => (
+                      <div key={field.key} className="flex items-start justify-between gap-3">
+                        <span className={subduedTextClass}>{field.label}</span>
+                        <span className={`text-right ${strongTextClass}`}>{maskCredentialValue(resource.credentialValues[field.key] ?? "")}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className={`rounded-xl border p-4 ${isDark ? "border-zinc-800 bg-zinc-950" : "border-zinc-200 bg-zinc-50/70"}`}>
+                  <div className={`text-xs font-medium ${subduedTextClass}`}>{resource.kind === "TTS" ? "可选音色" : "可选模型"}</div>
+                  <div className={`mt-3 text-xs leading-6 ${strongTextClass}`}>{capabilityLabel || "待维护"}</div>
+                </div>
+                <div className={`rounded-xl border p-4 ${isDark ? "border-zinc-800 bg-zinc-950" : "border-zinc-200 bg-zinc-50/70"}`}>
+                  <div className={`text-xs font-medium ${subduedTextClass}`}>关联智能体</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {boundAgents.length > 0 ? boundAgents.map((agent) => (
+                      <span
+                        key={agent.id}
+                        className={`rounded-full border px-3 py-1 text-xs ${isDark ? "border-zinc-700 bg-zinc-900 text-zinc-200" : "border-zinc-200 bg-white text-zinc-700"}`}
+                      >
+                        {agent.name}
+                      </span>
+                    )) : (
+                      <span className={`text-xs ${subduedTextClass}`}>暂未被智能体引用</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {resource.notes ? (
+                <div className={`mt-4 rounded-xl border px-4 py-3 text-xs leading-6 ${isDark ? "border-zinc-800 bg-zinc-950 text-zinc-300" : "border-zinc-200 bg-zinc-50 text-zinc-600"}`}>
+                  备注：{resource.notes}
+                </div>
+              ) : null}
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                <button type="button" onClick={() => handleEditResource(resource)} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-xs ${isDark ? "border-zinc-700 text-zinc-200 hover:bg-zinc-800" : "border-zinc-200 text-zinc-700 hover:bg-zinc-50"}`}><Pencil className="h-4 w-4" />编辑</button>
+                <button type="button" onClick={() => window.alert(`资源详情\n\n名称：${resource.name}\n类型：${RESOURCE_KIND_LABEL[resource.kind]}\n供应商：${resource.providerLabel}\n地址：${resource.endpoint}\n状态：${resource.status}`)} className={`rounded-lg border px-4 py-2 text-xs ${isDark ? "border-zinc-700 text-zinc-200 hover:bg-zinc-800" : "border-zinc-200 text-zinc-700 hover:bg-zinc-50"}`}>查看</button>
+                <button type="button" onClick={() => handleDeleteResource(resource)} className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-xs text-red-500 hover:bg-red-50 dark:border-red-500/20 dark:text-red-300 dark:hover:bg-red-500/10"><Trash2 className="h-4 w-4" />删除</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 
@@ -2707,9 +3354,7 @@ export default function Home() {
                 <select
                   value={selectedLicenseApp}
                   onChange={(event) => setSelectedLicenseApp(event.target.value)}
-                  className={`h-9 min-w-[180px] appearance-none rounded-lg border px-3 pr-8 text-xs ${
-                    isDark ? "border-zinc-700 bg-zinc-900 text-zinc-200" : "border-zinc-200 bg-white text-zinc-700"
-                  }`}
+                  className={`h-9 min-w-[180px] px-3 pr-8 ${pageSelectBaseClass}`}
                 >
                   {licenseAppOptions.map((option) => (
                     <option key={option} value={option}>
@@ -2726,9 +3371,7 @@ export default function Home() {
                 <select
                   value={selectedLicenseVersion}
                   onChange={(event) => setSelectedLicenseVersion(event.target.value as "全部" | LicenseItem["version"])}
-                  className={`h-9 min-w-[180px] appearance-none rounded-lg border px-3 pr-8 text-xs ${
-                    isDark ? "border-zinc-700 bg-zinc-900 text-zinc-200" : "border-zinc-200 bg-white text-zinc-700"
-                  }`}
+                  className={`h-9 min-w-[180px] px-3 pr-8 ${pageSelectBaseClass}`}
                 >
                   <option value="全部">全部</option>
                   <option value="基础版">基础版</option>
@@ -2742,7 +3385,7 @@ export default function Home() {
             <button
               type="button"
               onClick={() => window.alert("购买 License 和测算能力待接入")}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-700"
+              className={`${primaryButtonClass} px-4 py-2 text-xs`}
             >
               购买 License 和测算
             </button>
@@ -2833,7 +3476,7 @@ export default function Home() {
               key={item.label}
               type="button"
               onClick={() => window.alert(item.active ? "绑定新设备能力待接入" : item.label)}
-              className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+              className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${pageFilterButtonFocusClass} ${
                 item.active
                   ? "border-blue-600 bg-blue-600 text-white"
                   : isDark
@@ -2976,7 +3619,7 @@ export default function Home() {
               </div>
             </div>
             <div className="mt-5 flex flex-wrap gap-3">
-              <button type="button" onClick={() => window.alert("上传 MCP 到社区能力待接入")} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-700">
+              <button type="button" onClick={() => window.alert("上传 MCP 到社区能力待接入")} className={`${primaryButtonClass} px-4 py-2 text-xs`}>
                 <Upload className="h-4 w-4" />
                 上传 MCP
               </button>
@@ -3031,7 +3674,7 @@ export default function Home() {
                         <span className={`rounded-full px-2.5 py-1 text-[11px] ${isDark ? "bg-zinc-800 text-zinc-300" : "bg-zinc-100 text-zinc-600"}`}>{item.tag}</span>
                       </div>
                       <div className="mt-4 flex flex-wrap gap-3">
-                        <button type="button" onClick={() => window.alert(`下载资源：${item.name}`)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-medium text-white hover:bg-blue-700">
+                        <button type="button" onClick={() => window.alert(`下载资源：${item.name}`)} className={`${primaryButtonClass} px-3.5 py-2 text-xs`}>
                           <Download className="h-4 w-4" />
                           下载
                         </button>
@@ -3066,7 +3709,7 @@ export default function Home() {
             </div>
             <div className={`mt-4 text-base font-semibold ${strongTextClass}`}>{item.title}</div>
             <div className={`mt-2 text-xs ${subduedTextClass}`}>{item.desc}</div>
-            <button type="button" onClick={() => window.alert(`进入购买流程：${item.title}`)} className="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-700">{item.button}</button>
+            <button type="button" onClick={() => window.alert(`进入购买流程：${item.title}`)} className={`mt-5 ${primaryButtonClass} px-4 py-2 text-xs`}>{item.button}</button>
           </div>
         );
       })}
@@ -3074,6 +3717,10 @@ export default function Home() {
   );
 
   const renderSectionContent = () => {
+    if (agentTemplatePageOpen) {
+      return renderAgentTemplatePage();
+    }
+
     if (currentSection === "orchestration") {
       return <Workspace onOpenAssistant={() => ensureCatalogAssistantOpen("agent")} />;
     }
@@ -3158,7 +3805,7 @@ export default function Home() {
                     };
                     actions[currentSection]?.();
                   }}
-                  className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-medium text-white shadow-sm transition hover:bg-blue-700"
+                  className={primaryButtonClass}
                 >
                   <Plus className="h-4 w-4" />
                   {currentCopy.actionLabel}
@@ -3482,10 +4129,11 @@ export default function Home() {
         )}
       </main>
       {renderAgentCreateEntryDialog()}
-      {renderAgentTemplateDialog()}
+      {renderDeleteAgentDialog()}
       {renderAgentNameDialog()}
       {renderToolFormDialog()}
       {renderSkillFormDialog()}
+      {renderResourceFormDialog()}
     </div>
   );
 }

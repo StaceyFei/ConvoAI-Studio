@@ -64,7 +64,7 @@ export default function Workspace({ onOpenAssistant }: WorkspaceProps) {
       <div className="flex-1 overflow-hidden">
         <Group orientation="horizontal" className="h-full w-full">
           {/* Left Panel: detail or code example */}
-          <Panel defaultSize={58} minSize={20} className="relative z-10">
+          <Panel defaultSize={64} minSize={20} className="relative z-10">
             {renderMainPanel()}
           </Panel>
 
@@ -78,7 +78,7 @@ export default function Workspace({ onOpenAssistant }: WorkspaceProps) {
           </Separator>
 
           {/* Preview Panel */}
-          <Panel defaultSize={42} minSize={30} className="relative z-10">
+          <Panel defaultSize={36} minSize={24} className="relative z-10">
             <PreviewPanel onOpenAssistant={onOpenAssistant} />
           </Panel>
         </Group>

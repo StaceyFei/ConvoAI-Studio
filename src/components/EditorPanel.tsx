@@ -330,16 +330,15 @@ export default function EditorPanel() {
                 ) : (
                   <button
                     type="button"
-                    onClick={startEditing}
-                    className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition-all ${
+                    onClick={() => setIsEditing(true)}
+                    className={`inline-flex h-9 items-center justify-center rounded-2xl border px-4 transition-all active:scale-[0.97] ${
                       isDark
-                        ? "border-transparent bg-transparent text-zinc-500 opacity-0 hover:border-zinc-800 hover:bg-zinc-900/80 hover:text-zinc-200 group-hover:opacity-100"
-                        : "border-transparent bg-transparent text-zinc-400 opacity-0 hover:border-zinc-200 hover:bg-white/90 hover:text-zinc-700 group-hover:opacity-100"
+                        ? "border-white/10 bg-zinc-950/70 text-zinc-300 hover:border-white/20 hover:text-zinc-100 hover:bg-zinc-900"
+                        : "border-zinc-200/80 bg-white/88 text-zinc-600 hover:border-zinc-300 hover:text-zinc-800 hover:bg-zinc-50"
                     }`}
-                    title="编辑详情"
-                    aria-label="编辑详情"
                   >
-                    <Pencil className="h-4 w-4" />
+                    <Pencil className="mr-2 h-4 w-4" />
+                    <span className="text-sm font-medium">{previewAgent ? "修改预览参数" : "编辑详情"}</span>
                   </button>
                 )}
                 <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
@@ -350,7 +349,7 @@ export default function EditorPanel() {
               </div>
             </div>
             {isEditing ? (
-              <div className={`mt-4 ${inlineEditorClassName}`}>
+              <div className="mt-4 pt-3">
                 <textarea
                   value={agentDescription}
                   onChange={(event) => setAgentDescription(event.target.value)}
@@ -371,10 +370,8 @@ export default function EditorPanel() {
               const Icon = item.icon;
               return (
                 <div
-                  key={item.label}
-                  className={`rounded-xl border px-4 py-3 ${
-                    item.label === "模型" || item.label === "音色" ? "sm:col-span-2" : ""
-                  } ${
+                  key={item.key}
+                  className={`rounded-xl border px-4 py-3 sm:col-span-2 ${
                     isDark ? "border-zinc-800 bg-zinc-950/80" : "border-white/80 bg-white/80"
                   }`}
                 >
@@ -382,22 +379,55 @@ export default function EditorPanel() {
                     <Icon className={`h-4 w-4 ${isDark ? "text-zinc-400" : "text-zinc-500"}`} />
                     <span className={`text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>{item.label}</span>
                   </div>
-                  {isEditing && item.label === "模型" ? (
+                  {isEditing && item.key === "asr" ? (
                     <div className={`mt-2 grid grid-cols-[9rem_minmax(0,1fr)] gap-3 ${inlineEditorClassName}`}>
                       <select
-                        value={currentProviderKey}
+                        value={currentAsrResourceKey}
                         onChange={(event) => {
-                          const nextProvider = modelProviders.find((provider) => provider.key === event.target.value) || modelProviders[0];
+                          const nextProvider = asrResources.find((resource) => resource.id === event.target.value) || asrResources[0];
                           updateConfig((draft) => {
-                            draft.Config.LLMConfig.Mode = nextProvider.mode;
-                            draft.Config.LLMConfig.ModelName = nextProvider.models[0]?.value || "";
+                            applyAsrResource(draft, nextProvider);
                           });
                         }}
                         className={selectClassName}
                       >
-                        {modelProviders.map((provider) => (
-                          <option key={provider.key} value={provider.key}>
-                            {provider.label}
+                        {asrResources.map((provider) => (
+                          <option key={provider.id} value={provider.id}>
+                            {provider.providerLabel}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={currentAsrModel}
+                        onChange={(event) =>
+                          updateConfig((draft) => {
+                            applyAsrResource(draft, currentAsrResource, event.target.value);
+                          })
+                        }
+                        className={selectClassName}
+                      >
+                        {currentAsrModels.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : isEditing && item.key === "llm" ? (
+                    <div className={`mt-2 grid grid-cols-[9rem_minmax(0,1fr)] gap-3 ${inlineEditorClassName}`}>
+                      <select
+                        value={currentProviderKey}
+                        onChange={(event) => {
+                          const nextProvider = llmResources.find((resource) => resource.id === event.target.value) || llmResources[0];
+                          updateConfig((draft) => {
+                            applyLlmResource(draft, nextProvider);
+                          });
+                        }}
+                        className={selectClassName}
+                      >
+                        {llmResources.map((provider) => (
+                          <option key={provider.id} value={provider.id}>
+                            {provider.providerLabel}
                           </option>
                         ))}
                       </select>
@@ -405,8 +435,7 @@ export default function EditorPanel() {
                         value={currentModel}
                         onChange={(event) =>
                           updateConfig((draft) => {
-                            draft.Config.LLMConfig.Mode = currentProvider.mode;
-                            draft.Config.LLMConfig.ModelName = event.target.value;
+                            applyLlmResource(draft, currentLlmResource, event.target.value);
                           })
                         }
                         className={selectClassName}
@@ -418,22 +447,21 @@ export default function EditorPanel() {
                         ))}
                       </select>
                     </div>
-                  ) : isEditing && item.label === "音色" ? (
+                  ) : isEditing && item.key === "tts" ? (
                     <div className={`mt-2 grid grid-cols-[9rem_minmax(0,1fr)] gap-3 ${inlineEditorClassName}`}>
                       <select
                         value={currentVoiceProviderKey}
                         onChange={(event) => {
-                          const nextProvider = voiceProviders.find((provider) => provider.key === event.target.value) || voiceProviders[0];
+                          const nextProvider = ttsResources.find((resource) => resource.id === event.target.value) || ttsResources[0];
                           updateConfig((draft) => {
-                            draft.Config.TTSConfig.Provider = nextProvider.provider;
-                            draft.Config.TTSConfig.ProviderParams.audio.voice_type = nextProvider.voices[0]?.value || "";
+                            applyTtsResource(draft, nextProvider);
                           });
                         }}
                         className={selectClassName}
                       >
-                        {voiceProviders.map((provider) => (
-                          <option key={provider.key} value={provider.key}>
-                            {provider.label}
+                        {ttsResources.map((provider) => (
+                          <option key={provider.id} value={provider.id}>
+                            {provider.providerLabel}
                           </option>
                         ))}
                       </select>
@@ -441,8 +469,7 @@ export default function EditorPanel() {
                         value={currentVoiceValue}
                         onChange={(event) =>
                           updateConfig((draft) => {
-                            draft.Config.TTSConfig.Provider = currentVoiceProvider.provider;
-                            draft.Config.TTSConfig.ProviderParams.audio.voice_type = event.target.value;
+                            applyTtsResource(draft, currentTtsResource, event.target.value);
                           })
                         }
                         className={selectClassName}

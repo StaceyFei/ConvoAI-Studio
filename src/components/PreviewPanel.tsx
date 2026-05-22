@@ -7,12 +7,26 @@ type PreviewPanelProps = {
 };
 
 export default function PreviewPanel({ onOpenAssistant }: PreviewPanelProps) {
-  const { isCalling, isMicOn, isVideoOn, toggleCall, toggleMic, toggleVideo, theme, callError, setChatInput, agentName } = useWorkspaceStore();
+  const { 
+    isCalling, isMicOn, isVideoOn, toggleCall, toggleMic, toggleVideo, theme, callError, setChatInput, agentName,
+    previewAgent
+  } = useWorkspaceStore();
   const [position, setPosition] = useState({ x: 20, y: 20 });
   const [isDragging, setIsDragging] = useState(false);
   const [showCallInfo, setShowCallInfo] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   
+  const displayAgentName = previewAgent ? previewAgent.name : agentName;
+  const isTemplatePreviewMode = Boolean(previewAgent);
+  
+  const handleToggleCall = () => {
+    if (!isCalling && previewAgent) {
+      toggleCall(previewAgent.configJson);
+    } else {
+      toggleCall();
+    }
+  };
+
   // State for call info
   const [callInfoData, setCallInfoData] = useState({
     appId: "",
@@ -69,39 +83,42 @@ export default function PreviewPanel({ onOpenAssistant }: PreviewPanelProps) {
     <div className="min-h-20 flex flex-col px-5 py-3 shrink-0 transition-colors z-30 relative bg-transparent gap-2">
       <div className="flex items-center gap-2">
         <MonitorSmartphone className={`w-4 h-4 shrink-0 ${theme === 'dark' ? 'text-zinc-400' : 'text-zinc-500'}`} />
-        <h2 className={`text-sm font-semibold tracking-wide truncate ${theme === 'dark' ? 'text-zinc-200' : 'text-zinc-800'}`}>预览调试</h2>
+        <h2 className={`text-sm font-semibold tracking-wide truncate ${theme === 'dark' ? 'text-zinc-200' : 'text-zinc-800'}`}>
+          {isTemplatePreviewMode ? '模板预览' : '预览调试'}
+        </h2>
       </div>
       
-      {/* Call Info & Analysis Buttons - Always visible */}
-      <div className="flex w-full items-center justify-end gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <button
-          onClick={() => setShowCallInfo(!showCallInfo)}
-          className={`flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-            showCallInfo 
-              ? 'bg-blue-500 text-white shadow-sm' 
-              : theme === 'dark' 
-                ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700' 
-                : 'bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50 shadow-sm'
-          }`}
-        >
-          <Info className="w-3.5 h-3.5" />
-          本次通话信息
-        </button>
-        <button
-          disabled={true}
-          className={`flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-            theme === 'dark' ? 'bg-zinc-800/50 text-zinc-600 cursor-not-allowed' : 'bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed'
-          }`}
-        >
-          <Activity className="w-3.5 h-3.5" />
-          本次通话延时分析
-        </button>
-      </div>
+      {!isTemplatePreviewMode ? (
+        <div className="flex w-full items-center justify-end gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <button
+            onClick={() => setShowCallInfo(!showCallInfo)}
+            className={`flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+              showCallInfo 
+                ? 'bg-blue-500 text-white shadow-sm' 
+                : theme === 'dark' 
+                  ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700' 
+                  : 'bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50 shadow-sm'
+            }`}
+          >
+            <Info className="w-3.5 h-3.5" />
+            本次通话信息
+          </button>
+          <button
+            disabled={true}
+            className={`flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+              theme === 'dark' ? 'bg-zinc-800/50 text-zinc-600 cursor-not-allowed' : 'bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed'
+            }`}
+          >
+            <Activity className="w-3.5 h-3.5" />
+            本次通话延时分析
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 
   const renderCallInfoPanel = () => {
-    if (!showCallInfo) return null;
+    if (isTemplatePreviewMode || !showCallInfo) return null;
     return (
       <div className="absolute top-24 right-5 w-[340px] z-50 animate-in fade-in slide-in-from-top-4 duration-200">
         <div className={`rounded-xl shadow-2xl border overflow-hidden backdrop-blur-xl ${
@@ -183,18 +200,21 @@ export default function PreviewPanel({ onOpenAssistant }: PreviewPanelProps) {
           <div className="flex flex-col items-center mb-8 relative">
             <div className="absolute w-48 h-48 rounded-full bg-gradient-to-tr from-pink-200 via-purple-200 to-indigo-200 dark:from-pink-900/40 dark:via-purple-900/40 dark:to-indigo-900/40 blur-xl"></div>
             <div className="w-48 h-48 mb-8 z-10"></div>
-            <h2 className="text-xl font-medium z-10">{agentName}</h2>
+            <h2 className="text-xl font-medium z-10">{displayAgentName}</h2>
           </div>
 
           {/* Call Button */}
           <div className="flex flex-col items-center mt-32 mb-8">
             <button
-              onClick={toggleCall}
-              className="w-16 h-16 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white shadow-lg hover:opacity-90 transition-opacity mb-3"
+              onClick={handleToggleCall}
+              className={`w-16 h-16 rounded-full flex items-center justify-center transition-colors shadow-sm ${
+                theme === 'dark'
+                  ? 'bg-blue-600 text-white hover:bg-blue-500'
+                  : 'bg-blue-500 text-white hover:bg-blue-400'
+              }`}
             >
-              <Phone className="w-8 h-8 fill-current" />
+              <Phone className="w-6 h-6" />
             </button>
-            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">开始通话</span>
           </div>
         </div>
       </div>
@@ -272,7 +292,7 @@ export default function PreviewPanel({ onOpenAssistant }: PreviewPanelProps) {
           {/* Call Button */}
           <div className="flex flex-col items-center mt-32 mb-8">
             <button
-              onClick={toggleCall}
+              onClick={handleToggleCall}
               className="w-12 h-12 rounded-full flex items-center justify-center text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-300 transition-colors mb-2"
             >
               <X className="w-6 h-6" />
@@ -371,7 +391,7 @@ export default function PreviewPanel({ onOpenAssistant }: PreviewPanelProps) {
           </button>
 
           <button 
-            onClick={toggleCall}
+            onClick={handleToggleCall}
             className="w-16 h-16 rounded-full bg-zinc-100 dark:bg-zinc-800/80 flex items-center justify-center text-red-500 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors shadow-sm"
           >
             <X className="w-8 h-8" />
