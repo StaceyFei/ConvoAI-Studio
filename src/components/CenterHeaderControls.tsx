@@ -1,9 +1,13 @@
 import { useWorkspaceStore } from "../store/workspace";
 
-export function ModeSwitcher() {
+type ModeSwitcherProps = {
+  detailLabel?: string;
+};
+
+export function ModeSwitcher({ detailLabel = "智能体详情" }: ModeSwitcherProps) {
   const { theme, viewMode, setViewMode } = useWorkspaceStore();
   const modes = [
-    { key: 'detail' as const, label: '智能体详情' },
+    { key: 'detail' as const, label: detailLabel },
     { key: 'code' as const, label: '代码示例' },
   ];
 

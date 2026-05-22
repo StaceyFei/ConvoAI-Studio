@@ -1,5 +1,12 @@
 import { create } from 'zustand';
+import { createJSONStorage, persist } from 'zustand/middleware';
 import Ajv from 'ajv';
+import {
+  type ResourceKind,
+  type ThirdPartyResourceItem,
+  defaultThirdPartyResources,
+  findResourceById,
+} from '@/lib/thirdPartyResources';
 
 export interface ChatMessage {
   id: string;
@@ -126,6 +133,7 @@ export interface AgentSummary {
   model: string;
   voice: string;
   updatedAt: string;
+  configJson: string;
 }
 
 export interface VoiceProfile {
@@ -164,6 +172,24 @@ export interface KnowledgeBaseItem {
 
 type OrchestrationPreset = 'default' | 'blank';
 type ViewMode = 'detail' | 'code';
+type PersistedWorkspaceState = {
+  theme: WorkspaceState['theme'];
+  currentSection: WorkspaceState['currentSection'];
+  isSidebarCollapsed: WorkspaceState['isSidebarCollapsed'];
+  viewMode: WorkspaceState['viewMode'];
+  apiConfig: WorkspaceState['apiConfig'];
+  agentList: WorkspaceState['agentList'];
+  currentAgentId: WorkspaceState['currentAgentId'];
+  agentName: WorkspaceState['agentName'];
+  agentDescription: WorkspaceState['agentDescription'];
+  orchestrationPreset: WorkspaceState['orchestrationPreset'];
+  currentJson: WorkspaceState['currentJson'];
+  voiceProfiles: WorkspaceState['voiceProfiles'];
+  knowledgeBaseList: WorkspaceState['knowledgeBaseList'];
+  toolList: WorkspaceState['toolList'];
+  skillList: WorkspaceState['skillList'];
+  resourceList: WorkspaceState['resourceList'];
+};
 
 interface WorkspaceState {
   chatMessages: ChatMessage[];
@@ -181,7 +207,7 @@ interface WorkspaceState {
   isVideoOn: boolean;
   theme: 'light' | 'dark';
   apiConfig: ApiConfig;
-  toggleCall: () => void;
+  toggleCall: (configOverride?: string) => void;
   toggleMic: () => void;
   toggleVideo: () => void;
   toggleTheme: () => void;
@@ -211,9 +237,12 @@ interface WorkspaceState {
   knowledgeBaseList: KnowledgeBaseItem[];
   toolList: ToolItem[];
   skillList: SkillItem[];
+  resourceList: ThirdPartyResourceItem[];
   openAgentEditor: (agent: AgentSummary, preset?: OrchestrationPreset) => void;
   addAgent: (agent: AgentSummary) => void;
   removeAgent: (agentId: string) => void;
+  previewAgent: AgentSummary | null;
+  setPreviewAgent: (agent: AgentSummary | null) => void;
   addVoiceProfile: (voice: VoiceProfile) => void;
   updateVoiceProfile: (voiceId: string, patch: Partial<VoiceProfile>) => void;
   addKnowledgeBase: (knowledge: KnowledgeBaseItem) => void;
@@ -225,85 +254,133 @@ interface WorkspaceState {
   addSkill: (skill: SkillItem) => void;
   updateSkill: (skillId: string, patch: Partial<SkillItem>) => void;
   deleteSkill: (skillId: string) => void;
+  addResource: (resource: ThirdPartyResourceItem) => void;
+  updateResource: (resourceId: string, patch: Partial<ThirdPartyResourceItem>) => void;
+  deleteResource: (resourceId: string) => void;
 }
 
-const initialJson = `{
-  "AppId": "",
-  "RoomId": "",
-  "TaskId": "",
-  "AgentConfig": {
-    "TargetUserId": [
-      ""
-    ],
-    "UserId": "",
-    "WelcomeMessage": "你好，有什么我可以帮助你的？"
-  },
-  "Config": {
-    "ASRConfig": {
-      "Provider": "volcano",
-      "ProviderParams": {
-        "Mode": "bigmodel",
-        "VolcanoASRParameters": "{}",
-        "StreamMode": 2
-      }
-    },
-    "TTSConfig": {
-      "Provider": "volcano_bidirection",
-      "ProviderParams": {
-        "ResourceId": "volc.service_type.10029",
-        "audio": {
-          "voice_type": "zh_female_linjianvhai_moon_bigtts",
-          "speech_rate": 0
-        }
-      }
-    },
-    "LLMConfig": {
-      "Mode": "ArkV3",
-      "ModelName": "doubao-seed-1-8-251228",
-      "SystemMessages": [
-        "你是一个友好的AI助手"
-      ]
-    }
-  }
-}`;
+const defaultResourceList = defaultThirdPartyResources;
 
-const blankInitialJson = `{
-  "AppId": "",
-  "RoomId": "",
-  "TaskId": "",
-  "AgentConfig": {
-    "TargetUserId": [],
-    "UserId": "",
-    "WelcomeMessage": ""
-  },
-  "Config": {
-    "ASRConfig": {
-      "Provider": "",
-      "ProviderParams": {}
+export function buildEmptyConfigJson() {
+  return JSON.stringify(
+    {
+      AppId: "",
+      RoomId: "",
+      TaskId: "",
+      AgentConfig: {
+        TargetUserId: [],
+        UserId: "",
+        WelcomeMessage: "",
+      },
+      Config: {
+        ASRConfig: {
+          Provider: "",
+          ProviderParams: {},
+        },
+        TTSConfig: {
+          Provider: "",
+          ProviderParams: {
+            audio: {
+              voice_type: "",
+              speech_rate: 0,
+            },
+          },
+        },
+        LLMConfig: {
+          Mode: "",
+          Provider: "",
+          ModelName: "",
+          SystemMessages: [],
+          ProviderParams: {},
+        },
+      },
     },
-    "TTSConfig": {
-      "Provider": "",
-      "ProviderParams": {}
-    },
-    "LLMConfig": {
-      "Mode": "",
-      "ModelName": "",
-      "SystemMessages": []
-    }
-  }
-}`;
+    null,
+    2
+  );
+}
 
-const voiceLabelMap: Record<string, string> = {
-  zh_female_linjianvhai_moon_bigtts: "晓言·专业女声",
-  zh_female_zhinuan_moon_bigtts: "知暖·治愈女声",
-  zh_female_taotao_mars_bigtts: "桃桃·元气少女",
-  supplier_a_aurora_female: "Aurora·客服女声",
-  supplier_a_orion_male: "Orion·商务男声",
-  supplier_a_luna_female: "Luna·温柔女声",
-  multi_ava_bilingual_bigtts: "Ava·中英双语",
-  zh_female_xiaoshutong_bigtts: "小书童·亲和童声",
-  supplier_b_nova_male: "Nova·年轻男声",
-};
+function getDefaultResource(resources: ThirdPartyResourceItem[], kind: ResourceKind) {
+  return resources.find((item) => item.kind === kind && item.status === "已启用")
+    ?? resources.find((item) => item.kind === kind)
+    ?? null;
+}
+
+function buildManagedReference(resource: ThirdPartyResourceItem, extra: Record<string, unknown> = {}) {
+  return {
+    ManagedResourceId: resource.id,
+    ManagedResourceName: resource.name,
+    ProviderLabel: resource.providerLabel,
+    Endpoint: resource.endpoint,
+    CredentialKeys: Object.keys(resource.credentialValues).filter((key) => resource.credentialValues[key]),
+    ...extra,
+  };
+}
+
+export function buildAgentConfigJson(options?: {
+  resources?: ThirdPartyResourceItem[];
+  llmResourceId?: string;
+  llmModel?: string;
+  asrResourceId?: string;
+  asrModel?: string;
+  ttsResourceId?: string;
+  ttsVoice?: string;
+  prompt?: string;
+  welcomeMessage?: string;
+}) {
+  const resources = options?.resources ?? defaultResourceList;
+  const llmResource = findResourceById(resources, options?.llmResourceId) ?? getDefaultResource(resources, "LLM");
+  const asrResource = findResourceById(resources, options?.asrResourceId) ?? getDefaultResource(resources, "ASR");
+  const ttsResource = findResourceById(resources, options?.ttsResourceId) ?? getDefaultResource(resources, "TTS");
+  const base = JSON.parse(buildEmptyConfigJson());
+
+  base.AgentConfig.TargetUserId = [""];
+  base.AgentConfig.WelcomeMessage = options?.welcomeMessage ?? "你好，有什么我可以帮助你的？";
+
+  if (asrResource) {
+    base.Config.ASRConfig = {
+      Provider: asrResource.providerCode,
+      ProviderParams: buildManagedReference(asrResource, {
+        ModelName: options?.asrModel ?? asrResource.modelOptions[0]?.value ?? "",
+      }),
+    };
+  }
+
+  if (ttsResource) {
+    base.Config.TTSConfig = {
+      Provider: ttsResource.providerCode,
+      ProviderParams: buildManagedReference(ttsResource, {
+        ResourceId: ttsResource.credentialValues.resourceId ?? "",
+        audio: {
+          voice_type: options?.ttsVoice ?? ttsResource.voiceOptions[0]?.value ?? "",
+          speech_rate: 0,
+        },
+      }),
+    };
+  }
+
+  if (llmResource) {
+    base.Config.LLMConfig = {
+      Mode: llmResource.mode ?? "",
+      Provider: llmResource.providerCode,
+      ModelName: options?.llmModel ?? llmResource.modelOptions[0]?.value ?? "",
+      SystemMessages: options?.prompt ? [options.prompt] : ["你是一个友好的AI助手"],
+      ProviderParams: buildManagedReference(llmResource),
+    };
+  }
+
+  return JSON.stringify(base, null, 2);
+}
+
+const initialJson = buildAgentConfigJson();
+const blankInitialJson = buildEmptyConfigJson();
+
+function getVoiceDisplayLabel(resources: ThirdPartyResourceItem[], voiceValue?: string) {
+  if (!voiceValue) return "";
+  return resources
+    .flatMap((resource) => resource.voiceOptions)
+    .find((voice) => voice.value === voiceValue)?.label ?? voiceValue;
+}
 
 function formatWorkspaceDateTime() {
   return new Date().toLocaleString("zh-CN", { hour12: false });
@@ -361,7 +438,13 @@ const defaultAgentList: AgentSummary[] = [
     botId: 'xbotW7e-awjX',
     model: 'doubao-1.5-pro-32k-character-250715',
     voice: '晓言·专业女声',
-    updatedAt: '2026-05-18 20:36:00'
+    updatedAt: '2026-05-18 20:36:00',
+    configJson: buildAgentConfigJson({
+      llmModel: 'doubao-1.5-pro-32k-character-250715',
+      ttsVoice: 'zh_female_linjianvhai_moon_bigtts',
+      prompt: '你是一位温柔、有边界感、擅长共情和安抚的陪伴型助手，要先理解用户情绪，再给出温暖、自然的回应。',
+      welcomeMessage: '你好，我在这里陪你。如果你愿意，可以和我说说今天的心情。'
+    })
   },
   {
     id: 'agent-2',
@@ -371,7 +454,13 @@ const defaultAgentList: AgentSummary[] = [
     botId: 'xbotSeHAMdSAu',
     model: 'doubao-seed-1-6-flash-250828',
     voice: '桃桃·元气少女',
-    updatedAt: '2026-05-17 11:18:00'
+    updatedAt: '2026-05-17 11:18:00',
+    configJson: buildAgentConfigJson({
+      llmModel: 'doubao-seed-1-6-flash-250828',
+      ttsVoice: 'zh_female_taotao_mars_bigtts',
+      prompt: '你是一位企业智能助理，回答要准确、简洁、可靠，优先基于知识库和工具结果完成任务。',
+      welcomeMessage: '你好，我是你的企业智能助理，可以帮你解答问题和处理任务。'
+    })
   },
   {
     id: 'agent-3',
@@ -381,7 +470,13 @@ const defaultAgentList: AgentSummary[] = [
     botId: 'xbotQi1FDswxA',
     model: 'doubao-seed-1-6-flash-250828',
     voice: '知暖·治愈女声',
-    updatedAt: '2026-05-16 09:42:00'
+    updatedAt: '2026-05-16 09:42:00',
+    configJson: buildAgentConfigJson({
+      llmModel: 'doubao-seed-1-6-flash-250828',
+      ttsVoice: 'zh_female_zhinuan_moon_bigtts',
+      prompt: '你是一名通用智能助手，回答应自然、清晰，并优先保持实时互动的连贯性。',
+      welcomeMessage: '你好，我已经准备好开始对话了。'
+    })
   }
 ];
 
@@ -486,7 +581,82 @@ const defaultSkillList: SkillItem[] = [
   }
 ];
 
-export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
+const WORKSPACE_PERSIST_KEY = 'convoai-workspace';
+const WORKSPACE_PERSIST_VERSION = 1;
+
+function getVoiceValueByLabel(resources: ThirdPartyResourceItem[], voiceLabel?: string) {
+  if (!voiceLabel) return undefined;
+  return resources
+    .flatMap((resource) => resource.voiceOptions)
+    .find((voice) => voice.label === voiceLabel || voice.value === voiceLabel)?.value;
+}
+
+function normalizeResourceList(resources: unknown): ThirdPartyResourceItem[] {
+  if (!Array.isArray(resources) || resources.length === 0) return defaultResourceList;
+  return resources
+    .filter((item): item is Partial<ThirdPartyResourceItem> => Boolean(item) && typeof item === 'object')
+    .map((item, index) => ({
+      id: typeof item.id === 'string' && item.id.trim() ? item.id : `resource-${index + 1}`,
+      name: typeof item.name === 'string' && item.name.trim() ? item.name : `资源_${index + 1}`,
+      kind: item.kind === 'ASR' || item.kind === 'LLM' || item.kind === 'TTS' ? item.kind : 'LLM',
+      providerKey: typeof item.providerKey === 'string' ? item.providerKey : '',
+      providerLabel: typeof item.providerLabel === 'string' ? item.providerLabel : '',
+      providerCode: typeof item.providerCode === 'string' ? item.providerCode : '',
+      mode: typeof item.mode === 'string' ? item.mode : undefined,
+      endpoint: typeof item.endpoint === 'string' ? item.endpoint : '',
+      status: item.status === '已启用' || item.status === '停用' || item.status === '草稿' ? item.status : '草稿',
+      modelOptions: Array.isArray(item.modelOptions) ? item.modelOptions : [],
+      voiceOptions: Array.isArray(item.voiceOptions) ? item.voiceOptions : [],
+      credentialValues:
+        item.credentialValues && typeof item.credentialValues === 'object' ? item.credentialValues as Record<string, string> : {},
+      notes: typeof item.notes === 'string' ? item.notes : '',
+      updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : formatWorkspaceDateTime(),
+    }));
+}
+
+function normalizeAgentList(agents: unknown, resources: ThirdPartyResourceItem[]): AgentSummary[] {
+  if (!Array.isArray(agents) || agents.length === 0) return defaultAgentList;
+
+  return agents
+    .filter((item): item is Partial<AgentSummary> => Boolean(item) && typeof item === 'object')
+    .map((item, index) => {
+      const model = typeof item.model === 'string' ? item.model : '';
+      const voice = typeof item.voice === 'string' ? item.voice : '';
+      const llmResource = resources.find((resource) => resource.kind === 'LLM' && resource.modelOptions.some((option) => option.value === model));
+      const ttsResource = resources.find((resource) =>
+        resource.kind === 'TTS' && resource.voiceOptions.some((option) => option.label === voice || option.value === voice)
+      );
+      const inferredVoiceValue = getVoiceValueByLabel(resources, voice);
+
+      return {
+        id: typeof item.id === 'string' && item.id.trim() ? item.id : `agent-${index + 1}`,
+        name: typeof item.name === 'string' && item.name.trim() ? item.name : `智能体_${index + 1}`,
+        description: typeof item.description === 'string' ? item.description : '自定义智能体',
+        detailDescription: typeof item.detailDescription === 'string' ? item.detailDescription : '待补充智能体描述',
+        botId: typeof item.botId === 'string' && item.botId.trim() ? item.botId : `xbot${Math.random().toString(36).slice(2, 10)}`,
+        model,
+        voice,
+        updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : formatWorkspaceDateTime(),
+        configJson:
+          typeof item.configJson === 'string' && item.configJson.trim()
+            ? item.configJson
+            : buildAgentConfigJson({
+                resources,
+                llmResourceId: llmResource?.id,
+                llmModel: model,
+                ttsResourceId: ttsResource?.id,
+                ttsVoice: inferredVoiceValue,
+                prompt: typeof item.detailDescription === 'string' ? item.detailDescription : undefined,
+              }),
+      };
+    });
+}
+
+function getSelectedAgent(agentList: AgentSummary[], currentAgentId?: string | null) {
+  return agentList.find((agent) => agent.id === currentAgentId) ?? agentList[0] ?? null;
+}
+
+export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => ({
   chatMessages: [
     {
       id: 'welcome-1',
@@ -494,9 +664,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       content: '你好！我是 StartVoiceChat 配置助手。\n你可以直接用自然语言或语音告诉我你的需求，例如："我想开启一个语音聊天"、"我想开启声纹降噪。"\n或者，你也可以把已有的 JSON 配置粘贴在右侧，我会帮你校验和修改。\n如果遇到启动智能体失败的错误事件或错误码，也可以发给我帮你排查原因哦。'
     }
   ],
-  currentJson: initialJson,
+  currentJson: defaultAgentList[0].configJson,
   isGenerating: false,
-  ...getValidationState(initialJson),
+  ...getValidationState(defaultAgentList[0].configJson),
   isCalling: false,
   callError: null,
   chatInput: '',
@@ -535,24 +705,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   knowledgeBaseList: defaultKnowledgeBaseList,
   toolList: defaultToolList,
   skillList: defaultSkillList,
+  resourceList: defaultResourceList,
   openAgentEditor: (agent, preset = 'default') =>
     set({
       currentAgentId: agent.id,
       agentName: agent.name,
       agentDescription: agent.detailDescription,
       orchestrationPreset: preset,
-      currentJson: preset === 'blank' ? blankInitialJson : initialJson,
-      ...getValidationState(preset === 'blank' ? blankInitialJson : initialJson),
+      currentJson: preset === 'blank' ? (agent.configJson || blankInitialJson) : (agent.configJson || initialJson),
+      ...getValidationState(preset === 'blank' ? (agent.configJson || blankInitialJson) : (agent.configJson || initialJson)),
       currentSection: 'orchestration'
     }),
   addAgent: (agent) =>
     set((state) => ({
-      agentList: [agent, ...state.agentList]
+      agentList: [{ ...agent, configJson: agent.configJson || blankInitialJson }, ...state.agentList]
     })),
   removeAgent: (agentId) =>
     set((state) => ({
-      agentList: state.agentList.filter((agent) => agent.id !== agentId)
+      agentList: state.agentList.filter((agent) => agent.id !== agentId),
+      currentAgentId: state.currentAgentId === agentId ? null : state.currentAgentId,
     })),
+  previewAgent: null,
+  setPreviewAgent: (agent) => set({ previewAgent: agent }),
   addVoiceProfile: (voice) =>
     set((state) => ({
       voiceProfiles: [voice, ...state.voiceProfiles]
@@ -605,6 +779,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set((state) => ({
       skillList: state.skillList.filter((skill) => skill.id !== skillId)
     })),
+  addResource: (resource) =>
+    set((state) => ({
+      resourceList: [resource, ...state.resourceList]
+    })),
+  updateResource: (resourceId, patch) =>
+    set((state) => ({
+      resourceList: state.resourceList.map((resource) =>
+        resource.id === resourceId ? { ...resource, ...patch } : resource
+      )
+    })),
+  deleteResource: (resourceId) =>
+    set((state) => ({
+      resourceList: state.resourceList.filter((resource) => resource.id !== resourceId)
+    })),
   isMicOn: true,
   isVideoOn: true,
   theme: 'light',
@@ -615,14 +803,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setApiConfig: (config) => set((state) => ({ apiConfig: { ...state.apiConfig, ...config } })),
 
-  toggleCall: () => {
+  toggleCall: (configOverride) => {
     const { isCalling, isValid, currentJson } = get();
     if (isCalling) {
       set({ isCalling: false, callError: null });
       return;
     }
 
-    if (!isValid) {
+    const targetJson = configOverride || currentJson;
+    const isTargetValid = configOverride ? true : isValid; // 简单假设 override 的是合法的
+
+    if (!isTargetValid) {
       set({ 
         isCalling: true, 
         callError: JSON.stringify({ EventType: 1, RunStage: "preParamCheck", ErrorInfo: { Errorcode: 1000002, Reason: "JSON 配置格式不合法或缺少必填字段" } }, null, 2) 
@@ -631,7 +822,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
 
     try {
-      const parsed = JSON.parse(currentJson);
+      const parsed = JSON.parse(targetJson);
       
       // 仅在 TaskId 为特定值时模拟深层的业务报错，以便正常情况下可以展示通话成功的 UI
       if (parsed.TaskId === 'error_appid') {
@@ -705,9 +896,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const parsed = JSON.parse(json);
       const nextModel = parsed?.Config?.LLMConfig?.ModelName;
       const nextVoiceType = parsed?.Config?.TTSConfig?.ProviderParams?.audio?.voice_type;
+      const { resourceList } = get();
       nextAgentPatch = {
         model: nextModel || "",
-        voice: voiceLabelMap[nextVoiceType] || nextVoiceType || "",
+        voice: getVoiceDisplayLabel(resourceList, nextVoiceType) || nextVoiceType || "",
+        configJson: json,
         updatedAt: formatWorkspaceDateTime(),
       };
     } catch {
@@ -795,4 +988,58 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       setGenerating(false);
     }
   }
+}), {
+  name: WORKSPACE_PERSIST_KEY,
+  version: WORKSPACE_PERSIST_VERSION,
+  storage: createJSONStorage(() => localStorage),
+  partialize: (state): PersistedWorkspaceState => ({
+    theme: state.theme,
+    currentSection: state.currentSection,
+    isSidebarCollapsed: state.isSidebarCollapsed,
+    viewMode: state.viewMode,
+    apiConfig: state.apiConfig,
+    agentList: state.agentList,
+    currentAgentId: state.currentAgentId,
+    agentName: state.agentName,
+    agentDescription: state.agentDescription,
+    orchestrationPreset: state.orchestrationPreset,
+    currentJson: state.currentJson,
+    voiceProfiles: state.voiceProfiles,
+    knowledgeBaseList: state.knowledgeBaseList,
+    toolList: state.toolList,
+    skillList: state.skillList,
+    resourceList: state.resourceList,
+  }),
+  merge: (persistedState, currentState) => {
+    const persisted = (persistedState ?? {}) as Partial<PersistedWorkspaceState>;
+    const resourceList = normalizeResourceList(persisted.resourceList);
+    const agentList = normalizeAgentList(persisted.agentList, resourceList);
+    const selectedAgent = getSelectedAgent(agentList, persisted.currentAgentId);
+    const currentJson =
+      typeof persisted.currentJson === 'string' && persisted.currentJson.trim()
+        ? persisted.currentJson
+        : selectedAgent?.configJson ?? currentState.currentJson;
+    const validationState = getValidationState(currentJson);
+
+    return {
+      ...currentState,
+      theme: persisted.theme ?? currentState.theme,
+      currentSection: persisted.currentSection ?? currentState.currentSection,
+      isSidebarCollapsed: persisted.isSidebarCollapsed ?? currentState.isSidebarCollapsed,
+      viewMode: persisted.viewMode ?? currentState.viewMode,
+      apiConfig: persisted.apiConfig ?? currentState.apiConfig,
+      agentList,
+      currentAgentId: selectedAgent?.id ?? currentState.currentAgentId,
+      agentName: selectedAgent?.name ?? currentState.agentName,
+      agentDescription: selectedAgent?.detailDescription ?? currentState.agentDescription,
+      orchestrationPreset: persisted.orchestrationPreset ?? currentState.orchestrationPreset,
+      currentJson,
+      voiceProfiles: Array.isArray(persisted.voiceProfiles) ? persisted.voiceProfiles : currentState.voiceProfiles,
+      knowledgeBaseList: Array.isArray(persisted.knowledgeBaseList) ? persisted.knowledgeBaseList : currentState.knowledgeBaseList,
+      toolList: Array.isArray(persisted.toolList) ? persisted.toolList : currentState.toolList,
+      skillList: Array.isArray(persisted.skillList) ? persisted.skillList : currentState.skillList,
+      resourceList,
+      ...validationState,
+    };
+  },
 }));
