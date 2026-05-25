@@ -1,4 +1,4 @@
-import { AudioLines, Bot, Boxes, Check, GitBranch, Pencil, ShieldCheck, Sparkles, X } from "lucide-react";
+import { AudioLines, Bot, Boxes, Check, ChevronDown, GitBranch, Pencil, ShieldCheck, Sparkles, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useWorkspaceStore } from "../store/workspace";
 import { ModeSwitcher } from "./CenterHeaderControls";
@@ -21,6 +21,9 @@ export default function EditorPanel() {
   const isDark = theme === 'dark';
   const isBlankPreset = orchestrationPreset === 'blank';
   const [isEditing, setIsEditing] = useState(false);
+  const [isAsrAdvancedOpen, setIsAsrAdvancedOpen] = useState(false);
+  const [isLlmAdvancedOpen, setIsLlmAdvancedOpen] = useState(false);
+  const [isTtsAdvancedOpen, setIsTtsAdvancedOpen] = useState(false);
   const [editingSnapshot, setEditingSnapshot] = useState<{ name: string; json: string; description: string } | null>(null);
 
   const fallbackConfig = useMemo(
@@ -31,13 +34,30 @@ export default function EditorPanel() {
       Config: {
         ASRConfig: {
           Provider: "",
-          ProviderParams: {},
+          ProviderParams: {
+            RecognitionMode: "stream",
+            HotWords: [] as string[],
+          },
+          VADConfig: {
+            Enable: true,
+            Duration: 800,
+            EnableSemanticEos: true,
+          },
+          InterruptConfig: {
+            Enable: true,
+            Duration: 300,
+            Keywords: [] as string[],
+          },
         },
         TTSConfig: {
           Provider: "",
           ProviderParams: {
+            SynthesisMode: "stream",
             audio: {
               voice_type: "",
+              speech_rate: 0,
+              volume: 0,
+              pitch: 0,
             },
           },
         },
@@ -46,7 +66,13 @@ export default function EditorPanel() {
           Provider: "",
           ModelName: "",
           SystemMessages: [] as string[],
-          ProviderParams: {},
+          ProviderParams: {
+            ThinkingMode: "off",
+            Temperature: 1,
+            TopP: 1,
+            MaxTokens: 2048,
+            HistoryRounds: 10,
+          },
         },
       },
     }),
@@ -100,6 +126,33 @@ export default function EditorPanel() {
     ttsResources.flatMap((resource) => resource.voiceOptions).find((item) => item.value === currentVoiceValue)?.label ||
     currentVoiceValue ||
     "待选择";
+  const asrProviderParams = parsedConfig?.Config?.ASRConfig?.ProviderParams ?? {};
+  const asrVadConfig = parsedConfig?.Config?.ASRConfig?.VADConfig ?? {};
+  const asrInterruptConfig = parsedConfig?.Config?.ASRConfig?.InterruptConfig ?? {};
+  const llmProviderParams = parsedConfig?.Config?.LLMConfig?.ProviderParams ?? {};
+  const ttsProviderParams = parsedConfig?.Config?.TTSConfig?.ProviderParams ?? {};
+  const ttsAudioParams = ttsProviderParams?.audio ?? {};
+  const currentAsrRecognitionMode = asrProviderParams?.RecognitionMode || "stream";
+  const currentAsrVadEnabled = asrVadConfig?.Enable ?? true;
+  const currentAsrVadDuration = asrVadConfig?.Duration ?? 800;
+  const currentAsrSemanticEosEnabled = asrVadConfig?.EnableSemanticEos ?? true;
+  const currentAsrInterruptEnabled = asrInterruptConfig?.Enable ?? true;
+  const currentAsrInterruptDuration = asrInterruptConfig?.Duration ?? 300;
+  const currentAsrInterruptKeywords = Array.isArray(asrInterruptConfig?.Keywords)
+    ? asrInterruptConfig.Keywords.join(", ")
+    : (asrInterruptConfig?.Keywords ?? "");
+  const currentAsrHotWords = Array.isArray(asrProviderParams?.HotWords)
+    ? asrProviderParams.HotWords.join(", ")
+    : (asrProviderParams?.HotWords ?? "");
+  const currentThinkingMode = llmProviderParams?.ThinkingMode || "off";
+  const currentTemperature = llmProviderParams?.Temperature ?? 1;
+  const currentTopP = llmProviderParams?.TopP ?? 1;
+  const currentMaxTokens = llmProviderParams?.MaxTokens ?? 2048;
+  const currentHistoryRounds = llmProviderParams?.HistoryRounds ?? 10;
+  const currentTtsSynthesisMode = ttsProviderParams?.SynthesisMode || "stream";
+  const currentTtsSpeechRate = ttsAudioParams?.speech_rate ?? 0;
+  const currentTtsVolume = ttsAudioParams?.volume ?? 0;
+  const currentTtsPitch = ttsAudioParams?.pitch ?? 0;
   const systemMessages = parsedConfig?.Config?.LLMConfig?.SystemMessages;
   const promptText = Array.isArray(systemMessages) ? systemMessages.filter(Boolean).join("\n") || "待填写" : "待填写";
   const welcomeMessage = parsedConfig?.AgentConfig?.WelcomeMessage || "待填写";
@@ -117,11 +170,30 @@ export default function EditorPanel() {
     nextConfig.Config = nextConfig.Config || {};
     nextConfig.Config.ASRConfig = nextConfig.Config.ASRConfig || {};
     nextConfig.Config.ASRConfig.ProviderParams = nextConfig.Config.ASRConfig.ProviderParams || {};
+    nextConfig.Config.ASRConfig.ProviderParams.RecognitionMode = nextConfig.Config.ASRConfig.ProviderParams.RecognitionMode || "stream";
+    nextConfig.Config.ASRConfig.ProviderParams.HotWords = nextConfig.Config.ASRConfig.ProviderParams.HotWords || [];
+    nextConfig.Config.ASRConfig.VADConfig = nextConfig.Config.ASRConfig.VADConfig || {};
+    nextConfig.Config.ASRConfig.VADConfig.Enable = nextConfig.Config.ASRConfig.VADConfig.Enable ?? true;
+    nextConfig.Config.ASRConfig.VADConfig.Duration = nextConfig.Config.ASRConfig.VADConfig.Duration ?? 800;
+    nextConfig.Config.ASRConfig.VADConfig.EnableSemanticEos = nextConfig.Config.ASRConfig.VADConfig.EnableSemanticEos ?? true;
+    nextConfig.Config.ASRConfig.InterruptConfig = nextConfig.Config.ASRConfig.InterruptConfig || {};
+    nextConfig.Config.ASRConfig.InterruptConfig.Enable = nextConfig.Config.ASRConfig.InterruptConfig.Enable ?? true;
+    nextConfig.Config.ASRConfig.InterruptConfig.Duration = nextConfig.Config.ASRConfig.InterruptConfig.Duration ?? 300;
+    nextConfig.Config.ASRConfig.InterruptConfig.Keywords = nextConfig.Config.ASRConfig.InterruptConfig.Keywords || [];
     nextConfig.Config.LLMConfig = nextConfig.Config.LLMConfig || {};
     nextConfig.Config.LLMConfig.ProviderParams = nextConfig.Config.LLMConfig.ProviderParams || {};
+    nextConfig.Config.LLMConfig.ProviderParams.ThinkingMode = nextConfig.Config.LLMConfig.ProviderParams.ThinkingMode || "off";
+    nextConfig.Config.LLMConfig.ProviderParams.Temperature = nextConfig.Config.LLMConfig.ProviderParams.Temperature ?? 1;
+    nextConfig.Config.LLMConfig.ProviderParams.TopP = nextConfig.Config.LLMConfig.ProviderParams.TopP ?? 1;
+    nextConfig.Config.LLMConfig.ProviderParams.MaxTokens = nextConfig.Config.LLMConfig.ProviderParams.MaxTokens ?? 2048;
+    nextConfig.Config.LLMConfig.ProviderParams.HistoryRounds = nextConfig.Config.LLMConfig.ProviderParams.HistoryRounds ?? 10;
     nextConfig.Config.TTSConfig = nextConfig.Config.TTSConfig || {};
     nextConfig.Config.TTSConfig.ProviderParams = nextConfig.Config.TTSConfig.ProviderParams || {};
     nextConfig.Config.TTSConfig.ProviderParams.audio = nextConfig.Config.TTSConfig.ProviderParams.audio || {};
+    nextConfig.Config.TTSConfig.ProviderParams.SynthesisMode = nextConfig.Config.TTSConfig.ProviderParams.SynthesisMode || "stream";
+    nextConfig.Config.TTSConfig.ProviderParams.audio.speech_rate = nextConfig.Config.TTSConfig.ProviderParams.audio.speech_rate ?? 0;
+    nextConfig.Config.TTSConfig.ProviderParams.audio.volume = nextConfig.Config.TTSConfig.ProviderParams.audio.volume ?? 0;
+    nextConfig.Config.TTSConfig.ProviderParams.audio.pitch = nextConfig.Config.TTSConfig.ProviderParams.audio.pitch ?? 0;
 
     updater(nextConfig);
     updateJson(JSON.stringify(nextConfig, null, 2));
@@ -137,6 +209,20 @@ export default function EditorPanel() {
       ProviderLabel: resource.providerLabel,
       Endpoint: resource.endpoint,
       ModelName: modelValue ?? resource.modelOptions?.[0]?.value ?? "",
+      RecognitionMode: draft.Config.ASRConfig.ProviderParams?.RecognitionMode || "stream",
+      HotWords: draft.Config.ASRConfig.ProviderParams?.HotWords ?? [],
+    };
+    draft.Config.ASRConfig.VADConfig = {
+      ...draft.Config.ASRConfig.VADConfig,
+      Enable: draft.Config.ASRConfig.VADConfig?.Enable ?? true,
+      Duration: draft.Config.ASRConfig.VADConfig?.Duration ?? 800,
+      EnableSemanticEos: draft.Config.ASRConfig.VADConfig?.EnableSemanticEos ?? true,
+    };
+    draft.Config.ASRConfig.InterruptConfig = {
+      ...draft.Config.ASRConfig.InterruptConfig,
+      Enable: draft.Config.ASRConfig.InterruptConfig?.Enable ?? true,
+      Duration: draft.Config.ASRConfig.InterruptConfig?.Duration ?? 300,
+      Keywords: draft.Config.ASRConfig.InterruptConfig?.Keywords ?? [],
     };
   };
 
@@ -151,6 +237,11 @@ export default function EditorPanel() {
       ManagedResourceName: resource.name,
       ProviderLabel: resource.providerLabel,
       Endpoint: resource.endpoint,
+      ThinkingMode: draft.Config.LLMConfig.ProviderParams?.ThinkingMode || "off",
+      Temperature: draft.Config.LLMConfig.ProviderParams?.Temperature ?? 1,
+      TopP: draft.Config.LLMConfig.ProviderParams?.TopP ?? 1,
+      MaxTokens: draft.Config.LLMConfig.ProviderParams?.MaxTokens ?? 2048,
+      HistoryRounds: draft.Config.LLMConfig.ProviderParams?.HistoryRounds ?? 10,
     };
   };
 
@@ -164,10 +255,13 @@ export default function EditorPanel() {
       ProviderLabel: resource.providerLabel,
       Endpoint: resource.endpoint,
       ResourceId: resource.credentialValues?.resourceId ?? draft.Config.TTSConfig.ProviderParams?.ResourceId ?? "",
+      SynthesisMode: draft.Config.TTSConfig.ProviderParams?.SynthesisMode || "stream",
       audio: {
         ...draft.Config.TTSConfig.ProviderParams.audio,
         voice_type: voiceValue ?? resource.voiceOptions?.[0]?.value ?? "",
         speech_rate: draft.Config.TTSConfig.ProviderParams.audio?.speech_rate ?? 0,
+        volume: draft.Config.TTSConfig.ProviderParams.audio?.volume ?? 0,
+        pitch: draft.Config.TTSConfig.ProviderParams.audio?.pitch ?? 0,
       },
     };
   };
@@ -214,26 +308,124 @@ export default function EditorPanel() {
     },
   ];
 
-  const lineFieldClassName = `w-full border-0 border-b bg-transparent px-0 text-sm transition-colors focus:outline-none ${
+  const lineFieldClassName = `w-full border-0 border-b bg-transparent px-0 transition-colors focus:outline-none ${
     isDark
       ? "border-white/10 text-zinc-100 placeholder:text-zinc-500 focus:border-blue-400/45"
       : "border-zinc-200 text-zinc-900 placeholder:text-zinc-400 focus:border-blue-300"
   }`;
-  const inputClassName = `${lineFieldClassName} h-10 pb-1 pt-0 text-[18px] font-semibold tracking-[0.01em]`;
+  const titleFieldShellClassName = `flex h-10 w-full items-center transition-colors ${
+    isDark ? "border-white/10" : "border-zinc-200"
+  }`;
+  const titleEditingShellClassName = `${titleFieldShellClassName} border-b`;
+  const inputClassName = `h-full w-full appearance-none border-0 bg-transparent px-0 pb-1 pt-0 text-xl font-semibold leading-none tracking-[0.01em] focus:outline-none ${
+    isDark ? "text-zinc-100 placeholder:text-zinc-500" : "text-zinc-900 placeholder:text-zinc-400"
+  }`;
+  const titleDisplayClassName = `flex h-full w-full items-center truncate pb-1 pt-0 text-xl font-semibold leading-none tracking-[0.01em] ${
+    isDark ? "text-zinc-100" : "text-zinc-900"
+  }`;
   const selectClassName = `${lineFieldClassName} h-9 pb-1 pt-0 pr-6 text-[13px]`;
+  const numberInputClassName = `${lineFieldClassName} h-9 pb-1 pt-0 text-[13px]`;
+  const compactFieldLabelClass = `shrink-0 text-[11px] ${
+    isDark ? "text-zinc-500" : "text-zinc-500"
+  }`;
+  const sliderFieldLabelClass = `text-[11px] font-medium tracking-[0.01em] ${
+    isDark ? "text-zinc-400" : "text-zinc-500"
+  }`;
+  const sliderValueInputClass = `h-7 w-[58px] shrink-0 rounded-md border px-2 text-center text-[10px] focus:outline-none transition-colors ${
+    isDark
+      ? "border-white/6 bg-white/[0.03] text-zinc-400 placeholder:text-zinc-600 focus:border-blue-400/25 focus:bg-white/[0.05]"
+      : "border-zinc-200/70 bg-zinc-50/55 text-zinc-500 placeholder:text-zinc-400 focus:border-blue-300/70 focus:bg-white"
+  }`;
+  const compactNumberInputClass = `h-8 w-[72px] rounded-lg border px-2.5 text-center text-[12px] focus:outline-none ${
+    isDark
+      ? "border-white/10 bg-zinc-950/80 text-zinc-100 placeholder:text-zinc-500 focus:border-blue-400/35"
+      : "border-zinc-200 bg-white text-zinc-900 placeholder:text-zinc-400 focus:border-blue-300"
+  }`;
+  const compactSideFieldClass = `h-7 w-full rounded-md border px-2.5 text-[11px] focus:outline-none transition-colors ${
+    isDark
+      ? "border-white/6 bg-white/[0.03] text-zinc-400 placeholder:text-zinc-600 focus:border-blue-400/25 focus:bg-white/[0.05]"
+      : "border-zinc-200/70 bg-zinc-50/55 text-zinc-500 placeholder:text-zinc-400 focus:border-blue-300/70 focus:bg-white"
+  }`;
+  const disabledFieldClass = isDark ? "opacity-45" : "opacity-50";
+  const toggleRowClass = `flex items-center justify-between rounded-md border px-2.5 py-1.5 ${
+    isDark ? "border-white/5 bg-white/[0.02]" : "border-zinc-200/60 bg-zinc-50/40"
+  }`;
+  const inlineSettingSelectClass = `min-w-0 border-0 bg-transparent pr-5 text-right text-[11px] focus:outline-none ${
+    isDark ? "text-zinc-300" : "text-zinc-600"
+  }`;
+  const buildToggleClassName = (checked: boolean) =>
+    `relative inline-flex h-4.5 w-8 items-center rounded-full border transition-colors ${
+      checked
+        ? (isDark ? "border-blue-400/35 bg-blue-500/65" : "border-blue-300 bg-blue-500/85")
+        : (isDark ? "border-white/8 bg-zinc-900" : "border-zinc-200 bg-zinc-200/80")
+    }`;
+  const buildToggleKnobClassName = (checked: boolean) =>
+    `inline-block h-3.5 w-3.5 rounded-full bg-white shadow-[0_1px_4px_rgba(0,0,0,0.12)] transition-transform ${
+      checked ? "translate-x-4" : "translate-x-0.5"
+    }`;
+  const sliderTrackWrapClass = "min-w-0 flex-1";
+  const compactSelectClass = `h-8 min-w-0 rounded-lg border px-3 text-[12px] focus:outline-none ${
+    isDark
+      ? "border-white/10 bg-zinc-950/80 text-zinc-100 focus:border-blue-400/35"
+      : "border-zinc-200 bg-white text-zinc-900 focus:border-blue-300"
+  }`;
+  const sliderTrackBaseClass = "relative h-10";
+  const sliderTrackLineClass = "pointer-events-none absolute inset-x-0 top-6 h-[2px] -translate-y-1/2 rounded-full";
+  const sliderInputClass = `absolute inset-x-0 top-6 h-4 w-full -translate-y-1/2 cursor-pointer appearance-none bg-transparent
+    [&::-webkit-slider-runnable-track]:h-[2px]
+    [&::-webkit-slider-runnable-track]:bg-transparent
+    [&::-webkit-slider-runnable-track]:rounded-full
+    [&::-webkit-slider-thumb]:-mt-[5px]
+    [&::-webkit-slider-thumb]:h-3
+    [&::-webkit-slider-thumb]:w-3
+    [&::-webkit-slider-thumb]:appearance-none
+    [&::-webkit-slider-thumb]:rounded-full
+    [&::-webkit-slider-thumb]:border
+    ${isDark ? "[&::-webkit-slider-thumb]:border-blue-300 [&::-webkit-slider-thumb]:bg-blue-400" : "[&::-webkit-slider-thumb]:border-blue-500 [&::-webkit-slider-thumb]:bg-blue-500"}
+    [&::-webkit-slider-thumb]:shadow-[0_2px_8px_rgba(0,0,0,0.14)]
+    [&::-moz-range-track]:h-[2px]
+    [&::-moz-range-track]:rounded-full
+    [&::-moz-range-track]:bg-transparent
+    [&::-moz-range-thumb]:h-3
+    [&::-moz-range-thumb]:w-3
+    [&::-moz-range-thumb]:rounded-full
+    [&::-moz-range-thumb]:border
+    ${isDark ? "[&::-moz-range-thumb]:border-blue-300 [&::-moz-range-thumb]:bg-blue-400" : "[&::-moz-range-thumb]:border-blue-500 [&::-moz-range-thumb]:bg-blue-500"}
+    [&::-moz-range-thumb]:shadow-[0_2px_8px_rgba(0,0,0,0.14)]`;
   const inlineEditorClassName = `border-t pt-3 transition-colors ${
     isDark ? "border-white/8" : "border-zinc-200/80"
   }`;
-  const textareaClassName = `w-full border-0 bg-transparent px-0 py-0 text-sm leading-6 focus:outline-none ${
+  const textareaClassName = `w-full border-0 bg-transparent px-0 py-0 text-[13px] leading-6 focus:outline-none ${
     isDark ? "text-zinc-100 placeholder:text-zinc-500" : "text-zinc-900 placeholder:text-zinc-400"
   }`;
+  const formatSliderValue = (value: number) => value.toFixed(2).replace(/\.?0+$/, "");
+  const sliderThemeStyle = {
+    "--slider-active": isDark ? "rgba(96,165,250,0.95)" : "rgba(59,130,246,0.95)",
+    "--slider-inactive": isDark ? "rgba(63,63,70,0.9)" : "rgba(212,212,216,0.9)",
+  } as React.CSSProperties;
+  const buildSliderTrackStyle = (progressPercent: number) =>
+    ({
+      ...sliderThemeStyle,
+      background: `linear-gradient(to right, var(--slider-active) 0%, var(--slider-active) ${progressPercent}%, var(--slider-inactive) ${progressPercent}%, var(--slider-inactive) 100%)`,
+    }) as React.CSSProperties;
+  const buildSliderBubbleStyle = (progressPercent: number) =>
+    ({
+      left: `${Math.max(0, Math.min(100, progressPercent))}%`,
+      transform: "translateX(-50%)",
+    }) as React.CSSProperties;
 
   const startEditing = () => {
     setEditingSnapshot({ name: agentName, json: currentJson, description: agentDescription });
+    setIsAsrAdvancedOpen(false);
+    setIsLlmAdvancedOpen(false);
+    setIsTtsAdvancedOpen(false);
     setIsEditing(true);
   };
 
   const finishEditing = () => {
+    setIsAsrAdvancedOpen(false);
+    setIsLlmAdvancedOpen(false);
+    setIsTtsAdvancedOpen(false);
     setEditingSnapshot(null);
     setIsEditing(false);
   };
@@ -244,6 +436,9 @@ export default function EditorPanel() {
       updateJson(editingSnapshot.json);
       setAgentDescription(editingSnapshot.description);
     }
+    setIsAsrAdvancedOpen(false);
+    setIsLlmAdvancedOpen(false);
+    setIsTtsAdvancedOpen(false);
     setEditingSnapshot(null);
     setIsEditing(false);
   };
@@ -260,50 +455,40 @@ export default function EditorPanel() {
             </span>
           )}
         </div>
-        {previewAgent && (
-          <button
-            onClick={() => {
-              setPreviewAgent(null);
-              setCurrentSection("agents");
-            }}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${
-              isDark ? "bg-zinc-900 text-zinc-300 hover:bg-zinc-800" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
-            }`}
-          >
-            退出预览
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {previewAgent && (
+            <button
+              onClick={() => {
+                setPreviewAgent(null);
+                setCurrentSection("agents");
+              }}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${
+                isDark ? "bg-zinc-900 text-zinc-300 hover:bg-zinc-800" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+              }`}
+            >
+              退出预览
+            </button>
+          )}
+        </div>
       </div>
 
       <div className={`flex-1 overflow-y-auto px-6 pb-8 pt-4 [scrollbar-width:thin] ${
         isDark ? "[scrollbar-color:#3f3f46_transparent]" : "[scrollbar-color:#d4d4d8_transparent]"
       }`}>
-        <div className={`rounded-2xl border p-5 ${
+        <div className={`group rounded-2xl border p-5 ${
           isDark
             ? "border-blue-500/20 bg-gradient-to-br from-blue-500/10 via-zinc-950 to-zinc-950"
             : "border-blue-100 bg-gradient-to-br from-blue-50 via-white to-violet-50"
         }`}>
-          <div className="group">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0 flex-1">
-                {isEditing ? (
-                  <input
-                    value={agentName}
-                    onChange={(event) => setAgentName(event.target.value)}
-                    className={inputClassName}
-                    placeholder="输入智能体名称"
-                  />
-                ) : (
-                  <div className={`text-xl font-semibold ${isDark ? "text-zinc-100" : "text-zinc-900"}`}>{agentName}</div>
-                )}
-              </div>
+          <div>
+            <div className="flex h-11 items-center justify-end">
               <div className="flex items-center gap-2">
                 {isEditing ? (
                   <>
                     <button
                       type="button"
                       onClick={cancelEditing}
-                      className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border transition-colors ${
+                      className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border transition-colors ${
                         isDark
                           ? "border-white/10 bg-zinc-950/70 text-zinc-400 hover:border-white/15 hover:text-zinc-200"
                           : "border-zinc-200/80 bg-white/88 text-zinc-500 hover:border-zinc-300 hover:text-zinc-700"
@@ -316,7 +501,7 @@ export default function EditorPanel() {
                     <button
                       type="button"
                       onClick={finishEditing}
-                      className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border transition-colors ${
+                      className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border transition-colors ${
                         isDark
                           ? "border-blue-400/25 bg-blue-500/10 text-blue-300 hover:border-blue-300/35 hover:bg-blue-500/15"
                           : "border-blue-200 bg-blue-50/90 text-blue-600 hover:border-blue-300 hover:bg-blue-100/80"
@@ -330,23 +515,39 @@ export default function EditorPanel() {
                 ) : (
                   <button
                     type="button"
-                    onClick={() => setIsEditing(true)}
-                    className={`inline-flex h-9 items-center justify-center rounded-2xl border px-4 transition-all active:scale-[0.97] ${
+                    onClick={startEditing}
+                    className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border transition-all ${
                       isDark
-                        ? "border-white/10 bg-zinc-950/70 text-zinc-300 hover:border-white/20 hover:text-zinc-100 hover:bg-zinc-900"
-                        : "border-zinc-200/80 bg-white/88 text-zinc-600 hover:border-zinc-300 hover:text-zinc-800 hover:bg-zinc-50"
+                        ? "border-blue-500/10 bg-blue-500/15 text-blue-300 hover:border-zinc-800 hover:bg-zinc-900/80 hover:text-zinc-200"
+                        : "border-blue-100 bg-blue-100 text-blue-600 hover:border-zinc-200 hover:bg-white/90 hover:text-zinc-700"
                     }`}
+                    title={previewAgent ? "修改预览参数" : "编辑详情"}
+                    aria-label={previewAgent ? "修改预览参数" : "编辑详情"}
                   >
-                    <Pencil className="mr-2 h-4 w-4" />
-                    <span className="text-sm font-medium">{previewAgent ? "修改预览参数" : "编辑详情"}</span>
+                    <span className="relative flex h-5 w-5 items-center justify-center">
+                      <Bot className="absolute h-5 w-5 transition-all duration-150 ease-out group-hover:scale-90 group-hover:opacity-0" />
+                      <Pencil className="absolute h-4 w-4 opacity-0 transition-all duration-150 ease-out group-hover:scale-100 group-hover:opacity-100" />
+                    </span>
                   </button>
                 )}
-                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
-                  isDark ? "bg-blue-500/15 text-blue-300" : "bg-blue-100 text-blue-600"
-                }`}>
-                  <Bot className="h-5 w-5" />
+              </div>
+            </div>
+            <div className="mt-3 flex h-10 items-center justify-between gap-4">
+              <div className="flex h-10 min-w-0 flex-1 items-center">
+                <div className={isEditing ? titleEditingShellClassName : titleFieldShellClassName}>
+                  {isEditing ? (
+                    <input
+                      value={agentName}
+                      onChange={(event) => setAgentName(event.target.value)}
+                      className={inputClassName}
+                      placeholder="输入智能体名称"
+                    />
+                  ) : (
+                    <div className={titleDisplayClassName}>{agentName}</div>
+                  )}
                 </div>
               </div>
+              <div className="h-11 w-11 shrink-0" />
             </div>
             {isEditing ? (
               <div className="mt-4 pt-3">
@@ -380,106 +581,810 @@ export default function EditorPanel() {
                     <span className={`text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>{item.label}</span>
                   </div>
                   {isEditing && item.key === "asr" ? (
-                    <div className={`mt-2 grid grid-cols-[9rem_minmax(0,1fr)] gap-3 ${inlineEditorClassName}`}>
-                      <select
-                        value={currentAsrResourceKey}
-                        onChange={(event) => {
-                          const nextProvider = asrResources.find((resource) => resource.id === event.target.value) || asrResources[0];
-                          updateConfig((draft) => {
-                            applyAsrResource(draft, nextProvider);
-                          });
-                        }}
-                        className={selectClassName}
-                      >
-                        {asrResources.map((provider) => (
-                          <option key={provider.id} value={provider.id}>
-                            {provider.providerLabel}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        value={currentAsrModel}
-                        onChange={(event) =>
-                          updateConfig((draft) => {
-                            applyAsrResource(draft, currentAsrResource, event.target.value);
-                          })
-                        }
-                        className={selectClassName}
-                      >
-                        {currentAsrModels.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
+                    <div className={`mt-2 space-y-3 ${inlineEditorClassName}`}>
+                      <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-3">
+                        <select
+                          value={currentAsrResourceKey}
+                          onChange={(event) => {
+                            const nextProvider = asrResources.find((resource) => resource.id === event.target.value) || asrResources[0];
+                            updateConfig((draft) => {
+                              applyAsrResource(draft, nextProvider);
+                            });
+                          }}
+                          className={selectClassName}
+                        >
+                          {asrResources.map((provider) => (
+                            <option key={provider.id} value={provider.id}>
+                              {provider.providerLabel}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={currentAsrModel}
+                          onChange={(event) =>
+                            updateConfig((draft) => {
+                              applyAsrResource(draft, currentAsrResource, event.target.value);
+                            })
+                          }
+                          className={selectClassName}
+                        >
+                          {currentAsrModels.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className={`rounded-xl border ${
+                        isDark ? "border-white/8 bg-zinc-950/35" : "border-zinc-200/80 bg-zinc-50/55"
+                      }`}>
+                        <button
+                          type="button"
+                          onClick={() => setIsAsrAdvancedOpen((current) => !current)}
+                          className={`flex w-full items-center justify-between px-4 py-2.5 text-left transition-colors ${
+                            isDark ? "hover:bg-white/[0.01]" : "hover:bg-white/40"
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[11px] font-medium tracking-[0.01em] ${isDark ? "text-zinc-300" : "text-zinc-700"}`}>
+                                高级配置
+                              </span>
+                              <span className={`truncate text-[10px] ${isDark ? "text-zinc-500" : "text-zinc-500"}`}>
+                                识别模式、VAD 和打断策略
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] ${isDark ? "text-zinc-500" : "text-zinc-500"}`}>
+                              {isAsrAdvancedOpen ? "收起" : "展开"}
+                            </span>
+                            <ChevronDown
+                              className={`h-3.5 w-3.5 transition-transform ${isDark ? "text-zinc-500" : "text-zinc-500"} ${
+                                isAsrAdvancedOpen ? "rotate-180" : ""
+                              }`}
+                            />
+                          </div>
+                        </button>
+
+                        {isAsrAdvancedOpen ? (
+                          <div className="grid gap-3 px-4 py-3 sm:grid-cols-[176px_minmax(0,1fr)] sm:gap-x-8">
+                            <div className="space-y-2">
+                              <div className="block">
+                                <div className={toggleRowClass}>
+                                  <span className={`text-[11px] ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>
+                                    识别模式
+                                  </span>
+                                  <select
+                                    value={currentAsrRecognitionMode}
+                                    onChange={(event) =>
+                                      updateConfig((draft) => {
+                                        draft.Config.ASRConfig.ProviderParams.RecognitionMode = event.target.value;
+                                      })
+                                    }
+                                    className={inlineSettingSelectClass}
+                                  >
+                                    <option value="stream">流式</option>
+                                    <option value="non_stream">非流式</option>
+                                    <option value="stream_optimized">流式优化版</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="block space-y-1.5">
+                                <div className={compactFieldLabelClass}>VAD</div>
+                                <div className={toggleRowClass}>
+                                  <span className={`text-[10px] ${isDark ? "text-zinc-500" : "text-zinc-400"}`}>
+                                    {currentAsrVadEnabled ? "开启" : "关闭"}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={currentAsrVadEnabled}
+                                    aria-label="切换 VAD"
+                                    onClick={() =>
+                                      updateConfig((draft) => {
+                                        draft.Config.ASRConfig.VADConfig.Enable = !currentAsrVadEnabled;
+                                      })
+                                    }
+                                    className={buildToggleClassName(currentAsrVadEnabled)}
+                                  >
+                                    <span className={buildToggleKnobClassName(currentAsrVadEnabled)} />
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="block space-y-1.5">
+                                <div className={compactFieldLabelClass}>语义判停</div>
+                                <div className={toggleRowClass}>
+                                  <span className={`text-[10px] ${isDark ? "text-zinc-500" : "text-zinc-400"}`}>
+                                    {currentAsrSemanticEosEnabled ? "开启" : "关闭"}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={currentAsrSemanticEosEnabled}
+                                    aria-label="切换语义判停"
+                                    onClick={() =>
+                                      updateConfig((draft) => {
+                                        draft.Config.ASRConfig.VADConfig.EnableSemanticEos = !currentAsrSemanticEosEnabled;
+                                      })
+                                    }
+                                    className={buildToggleClassName(currentAsrSemanticEosEnabled)}
+                                  >
+                                    <span className={buildToggleKnobClassName(currentAsrSemanticEosEnabled)} />
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="block space-y-1.5">
+                                <div className={compactFieldLabelClass}>语音打断</div>
+                                <div className={toggleRowClass}>
+                                  <span className={`text-[10px] ${isDark ? "text-zinc-500" : "text-zinc-400"}`}>
+                                    {currentAsrInterruptEnabled ? "开启" : "关闭"}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={currentAsrInterruptEnabled}
+                                    aria-label="切换语音打断"
+                                    onClick={() =>
+                                      updateConfig((draft) => {
+                                        draft.Config.ASRConfig.InterruptConfig.Enable = !currentAsrInterruptEnabled;
+                                      })
+                                    }
+                                    className={buildToggleClassName(currentAsrInterruptEnabled)}
+                                  >
+                                    <span className={buildToggleKnobClassName(currentAsrInterruptEnabled)} />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className={`block space-y-1.5 ${!currentAsrVadEnabled ? disabledFieldClass : ""}`}>
+                                <div className={sliderFieldLabelClass}>VAD 时长</div>
+                                <div className="flex items-center gap-2.5">
+                                  <div className={sliderTrackWrapClass}>
+                                    <div className={sliderTrackBaseClass}>
+                                      <div
+                                        className={`pointer-events-none absolute left-0 top-0 z-10 -translate-y-full whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-medium leading-none ${
+                                          isDark ? "bg-blue-500/18 text-blue-200" : "bg-blue-50 text-blue-600"
+                                        }`}
+                                        style={buildSliderBubbleStyle((currentAsrVadDuration / 3000) * 100)}
+                                      >
+                                        {currentAsrVadDuration}
+                                      </div>
+                                      <div
+                                        className={sliderTrackLineClass}
+                                        style={buildSliderTrackStyle((currentAsrVadDuration / 3000) * 100)}
+                                      />
+                                      <input
+                                        type="range"
+                                        min="0"
+                                        max="3000"
+                                        step="100"
+                                        disabled={!currentAsrVadEnabled}
+                                        value={currentAsrVadDuration}
+                                        onChange={(event) =>
+                                          updateConfig((draft) => {
+                                            draft.Config.ASRConfig.VADConfig.Duration = Number(event.target.value || 0);
+                                          })
+                                        }
+                                        className={sliderInputClass}
+                                      />
+                                    </div>
+                                  </div>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="3000"
+                                    step="100"
+                                    disabled={!currentAsrVadEnabled}
+                                    value={currentAsrVadDuration}
+                                    onChange={(event) =>
+                                      updateConfig((draft) => {
+                                        draft.Config.ASRConfig.VADConfig.Duration = Number(event.target.value || 0);
+                                      })
+                                    }
+                                    className={`${sliderValueInputClass} ${!currentAsrVadEnabled ? "cursor-not-allowed" : ""}`}
+                                  />
+                                </div>
+                              </label>
+
+                              <label className={`block space-y-1.5 ${!currentAsrInterruptEnabled ? disabledFieldClass : ""}`}>
+                                <div className={sliderFieldLabelClass}>语音打断时长</div>
+                                <div className="flex items-center gap-2.5">
+                                  <div className={sliderTrackWrapClass}>
+                                    <div className={sliderTrackBaseClass}>
+                                      <div
+                                        className={`pointer-events-none absolute left-0 top-0 z-10 -translate-y-full whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-medium leading-none ${
+                                          isDark ? "bg-blue-500/18 text-blue-200" : "bg-blue-50 text-blue-600"
+                                        }`}
+                                        style={buildSliderBubbleStyle((currentAsrInterruptDuration / 2000) * 100)}
+                                      >
+                                        {currentAsrInterruptDuration}
+                                      </div>
+                                      <div
+                                        className={sliderTrackLineClass}
+                                        style={buildSliderTrackStyle((currentAsrInterruptDuration / 2000) * 100)}
+                                      />
+                                      <input
+                                        type="range"
+                                        min="0"
+                                        max="2000"
+                                        step="100"
+                                        disabled={!currentAsrInterruptEnabled}
+                                        value={currentAsrInterruptDuration}
+                                        onChange={(event) =>
+                                          updateConfig((draft) => {
+                                            draft.Config.ASRConfig.InterruptConfig.Duration = Number(event.target.value || 0);
+                                          })
+                                        }
+                                        className={sliderInputClass}
+                                      />
+                                    </div>
+                                  </div>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="2000"
+                                    step="100"
+                                    disabled={!currentAsrInterruptEnabled}
+                                    value={currentAsrInterruptDuration}
+                                    onChange={(event) =>
+                                      updateConfig((draft) => {
+                                        draft.Config.ASRConfig.InterruptConfig.Duration = Number(event.target.value || 0);
+                                      })
+                                    }
+                                    className={`${sliderValueInputClass} ${!currentAsrInterruptEnabled ? "cursor-not-allowed" : ""}`}
+                                  />
+                                </div>
+                              </label>
+
+                              <label className={`block space-y-1.5 ${!currentAsrInterruptEnabled ? disabledFieldClass : ""}`}>
+                                <div className={compactFieldLabelClass}>打断关键词</div>
+                                <input
+                                  type="text"
+                                  disabled={!currentAsrInterruptEnabled}
+                                  value={currentAsrInterruptKeywords}
+                                  onChange={(event) =>
+                                    updateConfig((draft) => {
+                                      draft.Config.ASRConfig.InterruptConfig.Keywords = event.target.value
+                                        .split(/[，,]/)
+                                        .map((item: string) => item.trim())
+                                        .filter(Boolean);
+                                    })
+                                  }
+                                  placeholder="多个词条用逗号分隔"
+                                  className={`${compactSideFieldClass} text-left ${!currentAsrInterruptEnabled ? "cursor-not-allowed" : ""}`}
+                                />
+                              </label>
+
+                              <label className="block space-y-1.5">
+                                <div className={compactFieldLabelClass}>热词</div>
+                                <input
+                                  type="text"
+                                  value={currentAsrHotWords}
+                                  onChange={(event) =>
+                                    updateConfig((draft) => {
+                                      draft.Config.ASRConfig.ProviderParams.HotWords = event.target.value
+                                        .split(/[，,]/)
+                                        .map((item: string) => item.trim())
+                                        .filter(Boolean);
+                                    })
+                                  }
+                                  placeholder="多个词条用逗号分隔"
+                                  className={`${compactSideFieldClass} text-left`}
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   ) : isEditing && item.key === "llm" ? (
-                    <div className={`mt-2 grid grid-cols-[9rem_minmax(0,1fr)] gap-3 ${inlineEditorClassName}`}>
-                      <select
-                        value={currentProviderKey}
-                        onChange={(event) => {
-                          const nextProvider = llmResources.find((resource) => resource.id === event.target.value) || llmResources[0];
-                          updateConfig((draft) => {
-                            applyLlmResource(draft, nextProvider);
-                          });
-                        }}
-                        className={selectClassName}
-                      >
-                        {llmResources.map((provider) => (
-                          <option key={provider.id} value={provider.id}>
-                            {provider.providerLabel}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        value={currentModel}
-                        onChange={(event) =>
-                          updateConfig((draft) => {
-                            applyLlmResource(draft, currentLlmResource, event.target.value);
-                          })
-                        }
-                        className={selectClassName}
-                      >
-                        {currentProviderModels.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
+                    <div className={`mt-2 space-y-3 ${inlineEditorClassName}`}>
+                      <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-3">
+                        <select
+                          value={currentProviderKey}
+                          onChange={(event) => {
+                            const nextProvider = llmResources.find((resource) => resource.id === event.target.value) || llmResources[0];
+                            updateConfig((draft) => {
+                              applyLlmResource(draft, nextProvider);
+                            });
+                          }}
+                          className={selectClassName}
+                        >
+                          {llmResources.map((provider) => (
+                            <option key={provider.id} value={provider.id}>
+                              {provider.providerLabel}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={currentModel}
+                          onChange={(event) =>
+                            updateConfig((draft) => {
+                              applyLlmResource(draft, currentLlmResource, event.target.value);
+                            })
+                          }
+                          className={selectClassName}
+                        >
+                          {currentProviderModels.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className={`rounded-xl border ${
+                        isDark ? "border-white/8 bg-zinc-950/35" : "border-zinc-200/80 bg-zinc-50/55"
+                      }`}>
+                        <button
+                          type="button"
+                          onClick={() => setIsLlmAdvancedOpen((current) => !current)}
+                          className={`flex w-full items-center justify-between px-4 py-2.5 text-left transition-colors ${
+                            isDark ? "hover:bg-white/[0.01]" : "hover:bg-white/40"
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[11px] font-medium tracking-[0.01em] ${isDark ? "text-zinc-300" : "text-zinc-700"}`}>
+                                高级配置
+                              </span>
+                              <span className={`truncate text-[10px] ${isDark ? "text-zinc-500" : "text-zinc-500"}`}>
+                                深度思考、历史轮次和采样参数
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] ${isDark ? "text-zinc-500" : "text-zinc-500"}`}>
+                              {isLlmAdvancedOpen ? "收起" : "展开"}
+                            </span>
+                            <ChevronDown
+                              className={`h-3.5 w-3.5 transition-transform ${isDark ? "text-zinc-500" : "text-zinc-500"} ${
+                                isLlmAdvancedOpen ? "rotate-180" : ""
+                              }`}
+                            />
+                          </div>
+                        </button>
+
+                        {isLlmAdvancedOpen ? (
+                          <div className="grid gap-3 px-4 py-3 sm:grid-cols-[176px_minmax(0,1fr)] sm:gap-x-8">
+                            <div className="space-y-2">
+                              <div className="block">
+                                <div className={toggleRowClass}>
+                                  <span className={`text-[11px] ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>
+                                    深度思考
+                                  </span>
+                                  <select
+                                    value={currentThinkingMode}
+                                    onChange={(event) =>
+                                      updateConfig((draft) => {
+                                        draft.Config.LLMConfig.ProviderParams.ThinkingMode = event.target.value;
+                                      })
+                                    }
+                                    className={inlineSettingSelectClass}
+                                  >
+                                    <option value="off">关闭</option>
+                                    <option value="on">开启</option>
+                                    <option value="auto">自动</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="block">
+                                <div className={toggleRowClass}>
+                                  <span className={`text-[11px] ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>
+                                    历史轮次
+                                  </span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    value={currentHistoryRounds}
+                                    onChange={(event) =>
+                                      updateConfig((draft) => {
+                                        draft.Config.LLMConfig.ProviderParams.HistoryRounds = Number(event.target.value || 0);
+                                      })
+                                    }
+                                    className="w-14 border-0 bg-transparent p-0 text-right text-[11px] focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="block space-y-1.5">
+                                <div className={sliderFieldLabelClass}>Temperature</div>
+                                <div className="flex items-center gap-2.5">
+                                  <div className={sliderTrackWrapClass}>
+                                    <div className={sliderTrackBaseClass}>
+                                      <div
+                                        className={`pointer-events-none absolute left-0 top-0 z-10 -translate-y-full whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-medium leading-none ${
+                                          isDark ? "bg-blue-500/18 text-blue-200" : "bg-blue-50 text-blue-600"
+                                        }`}
+                                        style={buildSliderBubbleStyle((currentTemperature / 2) * 100)}
+                                      >
+                                        {formatSliderValue(currentTemperature)}
+                                      </div>
+                                      <div
+                                        className={sliderTrackLineClass}
+                                        style={buildSliderTrackStyle((currentTemperature / 2) * 100)}
+                                      />
+                                      <input
+                                        type="range"
+                                        step="0.1"
+                                        min="0"
+                                        max="2"
+                                        value={currentTemperature}
+                                        onChange={(event) =>
+                                          updateConfig((draft) => {
+                                            draft.Config.LLMConfig.ProviderParams.Temperature = Number(event.target.value || 0);
+                                          })
+                                        }
+                                        className={sliderInputClass}
+                                      />
+                                    </div>
+                                  </div>
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    min="0"
+                                    max="2"
+                                    value={formatSliderValue(currentTemperature)}
+                                    onChange={(event) =>
+                                      updateConfig((draft) => {
+                                        draft.Config.LLMConfig.ProviderParams.Temperature = Number(event.target.value || 0);
+                                      })
+                                    }
+                                    className={sliderValueInputClass}
+                                  />
+                                </div>
+                              </label>
+
+                              <label className="block space-y-1.5">
+                                <div className={sliderFieldLabelClass}>Top P</div>
+                                <div className="flex items-center gap-2.5">
+                                  <div className={sliderTrackWrapClass}>
+                                    <div className={sliderTrackBaseClass}>
+                                      <div
+                                        className={`pointer-events-none absolute left-0 top-0 z-10 -translate-y-full whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-medium leading-none ${
+                                          isDark ? "bg-blue-500/18 text-blue-200" : "bg-blue-50 text-blue-600"
+                                        }`}
+                                        style={buildSliderBubbleStyle(currentTopP * 100)}
+                                      >
+                                        {formatSliderValue(currentTopP)}
+                                      </div>
+                                      <div
+                                        className={sliderTrackLineClass}
+                                        style={buildSliderTrackStyle(currentTopP * 100)}
+                                      />
+                                      <input
+                                        type="range"
+                                        step="0.05"
+                                        min="0"
+                                        max="1"
+                                        value={currentTopP}
+                                        onChange={(event) =>
+                                          updateConfig((draft) => {
+                                            draft.Config.LLMConfig.ProviderParams.TopP = Number(event.target.value || 0);
+                                          })
+                                        }
+                                        className={sliderInputClass}
+                                      />
+                                    </div>
+                                  </div>
+                                  <input
+                                    type="number"
+                                    step="0.05"
+                                    min="0"
+                                    max="1"
+                                    value={formatSliderValue(currentTopP)}
+                                    onChange={(event) =>
+                                      updateConfig((draft) => {
+                                        draft.Config.LLMConfig.ProviderParams.TopP = Number(event.target.value || 0);
+                                      })
+                                    }
+                                    className={sliderValueInputClass}
+                                  />
+                                </div>
+                              </label>
+
+                              <label className="block space-y-1.5">
+                                <div className={sliderFieldLabelClass}>Max Tokens</div>
+                                <div className="flex items-center gap-2.5">
+                                  <div className={sliderTrackWrapClass}>
+                                    <div className={sliderTrackBaseClass}>
+                                      <div
+                                        className={`pointer-events-none absolute left-0 top-0 z-10 -translate-y-full whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-medium leading-none ${
+                                          isDark ? "bg-blue-500/18 text-blue-200" : "bg-blue-50 text-blue-600"
+                                        }`}
+                                        style={buildSliderBubbleStyle(((currentMaxTokens - 256) / (8192 - 256)) * 100)}
+                                      >
+                                        {currentMaxTokens}
+                                      </div>
+                                      <div
+                                        className={sliderTrackLineClass}
+                                        style={buildSliderTrackStyle(((currentMaxTokens - 256) / (8192 - 256)) * 100)}
+                                      />
+                                      <input
+                                        type="range"
+                                        min="256"
+                                        max="8192"
+                                        step="128"
+                                        value={currentMaxTokens}
+                                        onChange={(event) =>
+                                          updateConfig((draft) => {
+                                            draft.Config.LLMConfig.ProviderParams.MaxTokens = Number(event.target.value || 256);
+                                          })
+                                        }
+                                        className={sliderInputClass}
+                                      />
+                                    </div>
+                                  </div>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    value={currentMaxTokens}
+                                    onChange={(event) =>
+                                      updateConfig((draft) => {
+                                        draft.Config.LLMConfig.ProviderParams.MaxTokens = Number(event.target.value || 1);
+                                      })
+                                    }
+                                    className={sliderValueInputClass}
+                                  />
+                                </div>
+                              </label>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   ) : isEditing && item.key === "tts" ? (
-                    <div className={`mt-2 grid grid-cols-[9rem_minmax(0,1fr)] gap-3 ${inlineEditorClassName}`}>
-                      <select
-                        value={currentVoiceProviderKey}
-                        onChange={(event) => {
-                          const nextProvider = ttsResources.find((resource) => resource.id === event.target.value) || ttsResources[0];
-                          updateConfig((draft) => {
-                            applyTtsResource(draft, nextProvider);
-                          });
-                        }}
-                        className={selectClassName}
-                      >
-                        {ttsResources.map((provider) => (
-                          <option key={provider.id} value={provider.id}>
-                            {provider.providerLabel}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        value={currentVoiceValue}
-                        onChange={(event) =>
-                          updateConfig((draft) => {
-                            applyTtsResource(draft, currentTtsResource, event.target.value);
-                          })
-                        }
-                        className={selectClassName}
-                      >
-                        {currentVoiceOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
+                    <div className={`mt-2 space-y-3 ${inlineEditorClassName}`}>
+                      <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-3">
+                        <select
+                          value={currentVoiceProviderKey}
+                          onChange={(event) => {
+                            const nextProvider = ttsResources.find((resource) => resource.id === event.target.value) || ttsResources[0];
+                            updateConfig((draft) => {
+                              applyTtsResource(draft, nextProvider);
+                            });
+                          }}
+                          className={selectClassName}
+                        >
+                          {ttsResources.map((provider) => (
+                            <option key={provider.id} value={provider.id}>
+                              {provider.providerLabel}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={currentVoiceValue}
+                          onChange={(event) =>
+                            updateConfig((draft) => {
+                              applyTtsResource(draft, currentTtsResource, event.target.value);
+                            })
+                          }
+                          className={selectClassName}
+                        >
+                          {currentVoiceOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className={`rounded-xl border ${
+                        isDark ? "border-white/8 bg-zinc-950/35" : "border-zinc-200/80 bg-zinc-50/55"
+                      }`}>
+                        <button
+                          type="button"
+                          onClick={() => setIsTtsAdvancedOpen((current) => !current)}
+                          className={`flex w-full items-center justify-between px-4 py-2.5 text-left transition-colors ${
+                            isDark ? "hover:bg-white/[0.01]" : "hover:bg-white/40"
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[11px] font-medium tracking-[0.01em] ${isDark ? "text-zinc-300" : "text-zinc-700"}`}>
+                                高级配置
+                              </span>
+                              <span className={`truncate text-[10px] ${isDark ? "text-zinc-500" : "text-zinc-500"}`}>
+                                合成模式、语速、音量和音调
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] ${isDark ? "text-zinc-500" : "text-zinc-500"}`}>
+                              {isTtsAdvancedOpen ? "收起" : "展开"}
+                            </span>
+                            <ChevronDown
+                              className={`h-3.5 w-3.5 transition-transform ${isDark ? "text-zinc-500" : "text-zinc-500"} ${
+                                isTtsAdvancedOpen ? "rotate-180" : ""
+                              }`}
+                            />
+                          </div>
+                        </button>
+
+                        {isTtsAdvancedOpen ? (
+                          <div className="grid gap-3 px-4 py-3 sm:grid-cols-[176px_minmax(0,1fr)] sm:gap-x-8">
+                            <div className="space-y-2">
+                              <div className="block">
+                                <div className={toggleRowClass}>
+                                  <span className={`text-[11px] ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>
+                                    合成模式
+                                  </span>
+                                  <select
+                                    value={currentTtsSynthesisMode}
+                                    onChange={(event) =>
+                                      updateConfig((draft) => {
+                                        draft.Config.TTSConfig.ProviderParams.SynthesisMode = event.target.value;
+                                      })
+                                    }
+                                    className={inlineSettingSelectClass}
+                                  >
+                                    <option value="stream">流式</option>
+                                    <option value="non_stream">非流式</option>
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="space-y-2.5">
+                              <label className="block space-y-1.5">
+                                <div className={sliderFieldLabelClass}>语速</div>
+                                <div className="flex items-center gap-2.5">
+                                  <div className={sliderTrackWrapClass}>
+                                    <div className={sliderTrackBaseClass}>
+                                      <div
+                                        className={`pointer-events-none absolute left-0 top-0 z-10 -translate-y-full whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-medium leading-none ${
+                                          isDark ? "bg-blue-500/18 text-blue-200" : "bg-blue-50 text-blue-600"
+                                        }`}
+                                        style={buildSliderBubbleStyle(((currentTtsSpeechRate + 50) / 150) * 100)}
+                                      >
+                                        {currentTtsSpeechRate}
+                                      </div>
+                                      <div
+                                        className={sliderTrackLineClass}
+                                        style={buildSliderTrackStyle(((currentTtsSpeechRate + 50) / 150) * 100)}
+                                      />
+                                      <input
+                                        type="range"
+                                        min="-50"
+                                        max="100"
+                                        step="1"
+                                        value={currentTtsSpeechRate}
+                                        onChange={(event) =>
+                                          updateConfig((draft) => {
+                                            draft.Config.TTSConfig.ProviderParams.audio.speech_rate = Number(event.target.value || 0);
+                                          })
+                                        }
+                                        className={sliderInputClass}
+                                      />
+                                    </div>
+                                  </div>
+                                  <input
+                                    type="number"
+                                    min="-50"
+                                    max="100"
+                                    step="1"
+                                    value={currentTtsSpeechRate}
+                                    onChange={(event) =>
+                                      updateConfig((draft) => {
+                                        draft.Config.TTSConfig.ProviderParams.audio.speech_rate = Number(event.target.value || 0);
+                                      })
+                                    }
+                                    className={sliderValueInputClass}
+                                  />
+                                </div>
+                              </label>
+
+                              <label className="block space-y-1.5">
+                                <div className={sliderFieldLabelClass}>音量</div>
+                                <div className="flex items-center gap-2.5">
+                                  <div className={sliderTrackWrapClass}>
+                                    <div className={sliderTrackBaseClass}>
+                                      <div
+                                        className={`pointer-events-none absolute left-0 top-0 z-10 -translate-y-full whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-medium leading-none ${
+                                          isDark ? "bg-blue-500/18 text-blue-200" : "bg-blue-50 text-blue-600"
+                                        }`}
+                                        style={buildSliderBubbleStyle(((currentTtsVolume + 50) / 150) * 100)}
+                                      >
+                                        {currentTtsVolume}
+                                      </div>
+                                      <div
+                                        className={sliderTrackLineClass}
+                                        style={buildSliderTrackStyle(((currentTtsVolume + 50) / 150) * 100)}
+                                      />
+                                      <input
+                                        type="range"
+                                        min="-50"
+                                        max="100"
+                                        step="1"
+                                        value={currentTtsVolume}
+                                        onChange={(event) =>
+                                          updateConfig((draft) => {
+                                            draft.Config.TTSConfig.ProviderParams.audio.volume = Number(event.target.value || 0);
+                                          })
+                                        }
+                                        className={sliderInputClass}
+                                      />
+                                    </div>
+                                  </div>
+                                  <input
+                                    type="number"
+                                    min="-50"
+                                    max="100"
+                                    step="1"
+                                    value={currentTtsVolume}
+                                    onChange={(event) =>
+                                      updateConfig((draft) => {
+                                        draft.Config.TTSConfig.ProviderParams.audio.volume = Number(event.target.value || 0);
+                                      })
+                                    }
+                                    className={sliderValueInputClass}
+                                  />
+                                </div>
+                              </label>
+
+                              <label className="block space-y-1.5">
+                                <div className={sliderFieldLabelClass}>音调</div>
+                                <div className="flex items-center gap-2.5">
+                                  <div className={sliderTrackWrapClass}>
+                                    <div className={sliderTrackBaseClass}>
+                                      <div
+                                        className={`pointer-events-none absolute left-0 top-0 z-10 -translate-y-full whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-medium leading-none ${
+                                          isDark ? "bg-blue-500/18 text-blue-200" : "bg-blue-50 text-blue-600"
+                                        }`}
+                                        style={buildSliderBubbleStyle(((currentTtsPitch + 12) / 24) * 100)}
+                                      >
+                                        {currentTtsPitch}
+                                      </div>
+                                      <div
+                                        className={sliderTrackLineClass}
+                                        style={buildSliderTrackStyle(((currentTtsPitch + 12) / 24) * 100)}
+                                      />
+                                      <input
+                                        type="range"
+                                        min="-12"
+                                        max="12"
+                                        step="1"
+                                        value={currentTtsPitch}
+                                        onChange={(event) =>
+                                          updateConfig((draft) => {
+                                            draft.Config.TTSConfig.ProviderParams.audio.pitch = Number(event.target.value || 0);
+                                          })
+                                        }
+                                        className={sliderInputClass}
+                                      />
+                                    </div>
+                                  </div>
+                                  <input
+                                    type="number"
+                                    min="-12"
+                                    max="12"
+                                    step="1"
+                                    value={currentTtsPitch}
+                                    onChange={(event) =>
+                                      updateConfig((draft) => {
+                                        draft.Config.TTSConfig.ProviderParams.audio.pitch = Number(event.target.value || 0);
+                                      })
+                                    }
+                                    className={sliderValueInputClass}
+                                  />
+                                </div>
+                              </label>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   ) : (
                     <div className={`mt-2 break-words text-[13px] leading-6 ${isDark ? "text-zinc-100" : "text-zinc-900"}`}>{item.value}</div>

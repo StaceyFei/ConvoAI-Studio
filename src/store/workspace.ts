@@ -275,14 +275,30 @@ export function buildEmptyConfigJson() {
       Config: {
         ASRConfig: {
           Provider: "",
-          ProviderParams: {},
+          ProviderParams: {
+            RecognitionMode: "stream",
+            HotWords: [],
+          },
+          VADConfig: {
+            Enable: true,
+            Duration: 800,
+            EnableSemanticEos: true,
+          },
+          InterruptConfig: {
+            Enable: true,
+            Duration: 300,
+            Keywords: [],
+          },
         },
         TTSConfig: {
           Provider: "",
           ProviderParams: {
+            SynthesisMode: "stream",
             audio: {
               voice_type: "",
               speech_rate: 0,
+              volume: 0,
+              pitch: 0,
             },
           },
         },
@@ -291,7 +307,13 @@ export function buildEmptyConfigJson() {
           Provider: "",
           ModelName: "",
           SystemMessages: [],
-          ProviderParams: {},
+          ProviderParams: {
+            ThinkingMode: "off",
+            Temperature: 1,
+            TopP: 1,
+            MaxTokens: 2048,
+            HistoryRounds: 10,
+          },
         },
       },
     },
@@ -321,6 +343,11 @@ export function buildAgentConfigJson(options?: {
   resources?: ThirdPartyResourceItem[];
   llmResourceId?: string;
   llmModel?: string;
+  llmThinkingMode?: "off" | "on" | "auto";
+  llmTemperature?: number;
+  llmTopP?: number;
+  llmMaxTokens?: number;
+  llmHistoryRounds?: number;
   asrResourceId?: string;
   asrModel?: string;
   ttsResourceId?: string;
@@ -342,7 +369,19 @@ export function buildAgentConfigJson(options?: {
       Provider: asrResource.providerCode,
       ProviderParams: buildManagedReference(asrResource, {
         ModelName: options?.asrModel ?? asrResource.modelOptions[0]?.value ?? "",
+        RecognitionMode: "stream",
+        HotWords: [],
       }),
+      VADConfig: {
+        Enable: true,
+        Duration: 800,
+        EnableSemanticEos: true,
+      },
+      InterruptConfig: {
+        Enable: true,
+        Duration: 300,
+        Keywords: [],
+      },
     };
   }
 
@@ -350,10 +389,13 @@ export function buildAgentConfigJson(options?: {
     base.Config.TTSConfig = {
       Provider: ttsResource.providerCode,
       ProviderParams: buildManagedReference(ttsResource, {
+        SynthesisMode: "stream",
         ResourceId: ttsResource.credentialValues.resourceId ?? "",
         audio: {
           voice_type: options?.ttsVoice ?? ttsResource.voiceOptions[0]?.value ?? "",
           speech_rate: 0,
+          volume: 0,
+          pitch: 0,
         },
       }),
     };
@@ -365,7 +407,13 @@ export function buildAgentConfigJson(options?: {
       Provider: llmResource.providerCode,
       ModelName: options?.llmModel ?? llmResource.modelOptions[0]?.value ?? "",
       SystemMessages: options?.prompt ? [options.prompt] : ["你是一个友好的AI助手"],
-      ProviderParams: buildManagedReference(llmResource),
+      ProviderParams: buildManagedReference(llmResource, {
+        ThinkingMode: options?.llmThinkingMode ?? "off",
+        Temperature: options?.llmTemperature ?? 1,
+        TopP: options?.llmTopP ?? 1,
+        MaxTokens: options?.llmMaxTokens ?? 2048,
+        HistoryRounds: options?.llmHistoryRounds ?? 10,
+      }),
     };
   }
 
