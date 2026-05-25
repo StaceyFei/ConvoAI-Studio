@@ -54,6 +54,7 @@ import {
   maskCredentialValue,
   parseOptionLines,
 } from "@/lib/thirdPartyResources";
+import { FEATURE_CONFIG_TABS, type FeatureConfigTabKey } from "@/lib/featureConfigs";
 
 type NavItem = {
   type: "item";
@@ -159,16 +160,6 @@ type AgentTemplate = {
   skills: string[];
 };
 
-type FeatureConfigTabKey =
-  | "cloud-recording"
-  | "snapshot"
-  | "callback"
-  | "rts-message"
-  | "hardware-scene"
-  | "ai-vad"
-  | "voiceprint-denoise"
-  | "multi-voiceprint-identification";
-
 const agentTemplates: AgentTemplate[] = [
   {
     id: "smart-assistant",
@@ -180,7 +171,7 @@ const agentTemplates: AgentTemplate[] = [
     voice: "晓言·专业女声",
     prompt: "你是一名企业智能助理，回答要准确、简洁、可靠，优先基于企业知识库和工具结果完成问题解答与任务协同。",
     welcomeMessage: "你好，我是你的企业智能助理，可以帮你解答问题和处理任务。",
-    features: ["AI VAD", "云端录制", "RTS 实时消息"],
+    features: ["云端录制", "RTS 实时消息"],
     tools: ["知识检索 MCP", "工单系统 MCP"],
     skills: ["意图分类 Skill", "摘要生成 Skill"],
   },
@@ -194,7 +185,7 @@ const agentTemplates: AgentTemplate[] = [
     voice: "桃桃·元气少女",
     prompt: "你是一位可爱、活泼、善于互动的玩偶角色，语气轻松俏皮，适合陪聊、互动问答和直播场景。",
     welcomeMessage: "嗨，我来陪你玩啦，今天想聊点什么？",
-    features: ["AI VAD", "声纹降噪", "多人声纹识别"],
+    features: ["声纹降噪", "多人声纹识别"],
     tools: ["表情动作控制 MCP"],
     skills: ["话术生成 Skill", "情绪识别 Skill"],
   },
@@ -208,7 +199,7 @@ const agentTemplates: AgentTemplate[] = [
     voice: "知暖·治愈女声",
     prompt: "你是一位温柔、有边界感、擅长共情和安抚的陪伴型助手，要先理解用户情绪，再给出温暖、自然的回应。",
     welcomeMessage: "你好，我在这里陪你。如果你愿意，可以和我说说今天的心情。",
-    features: ["AI VAD", "声纹降噪", "云端录制"],
+    features: ["声纹降噪", "云端录制"],
     tools: ["用户画像 MCP"],
     skills: ["情绪识别 Skill", "回复建议 Skill"],
   },
@@ -222,7 +213,7 @@ const agentTemplates: AgentTemplate[] = [
     voice: "Ava·中英双语",
     prompt: "你是一名专业双语翻译助手，要求翻译准确、自然、保留术语一致性，并可在必要时给出简短解释。",
     welcomeMessage: "你好，我可以帮你进行中英双语实时翻译。",
-    features: ["AI VAD", "RTS 实时消息", "硬件场景接入"],
+    features: ["RTS 实时消息", "硬件场景接入"],
     tools: ["术语库 MCP", "会议纪要 MCP"],
     skills: ["多语翻译 Skill", "术语纠偏 Skill"],
   },
@@ -236,7 +227,7 @@ const agentTemplates: AgentTemplate[] = [
     voice: "小书童·亲和童声",
     prompt: "你是一位面向儿童的百科老师，表达要友好、易懂、安全，尽量用孩子能理解的方式解释知识点。",
     welcomeMessage: "小朋友你好呀，今天想和我一起认识什么新知识呢？",
-    features: ["AI VAD", "多人声纹识别", "云端录制"],
+    features: ["多人声纹识别", "云端录制"],
     tools: ["知识检索 MCP", "课程编排 MCP"],
     skills: ["内容审核 Skill", "分龄讲解 Skill"],
   },
@@ -523,14 +514,13 @@ export default function Home() {
     { id: "biz-2", name: "客服回访", businessId: "customer_care", scene: "售后", status: "测试中" },
   ]);
   const [selectedFeatureAppId, setSelectedFeatureAppId] = useState("小龙虾(69dc5e0f1fc5bf017632e7b4)");
-  const [activeFeatureTab, setActiveFeatureTab] = useState<FeatureConfigTabKey>("ai-vad");
+  const [activeFeatureTab, setActiveFeatureTab] = useState<FeatureConfigTabKey>("voiceprint-denoise");
   const [featureEnabledMap, setFeatureEnabledMap] = useState<Record<FeatureConfigTabKey, boolean>>({
     "cloud-recording": true,
     snapshot: false,
     callback: true,
     "rts-message": false,
     "hardware-scene": false,
-    "ai-vad": true,
     "voiceprint-denoise": false,
     "multi-voiceprint-identification": false,
   });
@@ -3006,85 +2996,7 @@ export default function Home() {
   );
 
   const renderFeatureConfigs = () => {
-    const featureTabs: Array<{
-      key: FeatureConfigTabKey;
-      label: string;
-      description: string;
-      notes: string[];
-    }> = [
-      {
-        key: "ai-vad",
-        label: "AI VAD",
-        description: "开启后可基于语音活动检测优化打断、唤醒和静音判断效果。",
-        notes: [
-          "AI VAD 可提升复杂噪声环境下的人声起止判断准确率。",
-          "建议结合业务的打断阈值和静默时长策略一起配置，以获得更自然的对话体验。",
-        ],
-      },
-      {
-        key: "voiceprint-denoise",
-        label: "声纹降噪",
-        description: "开启后可在保留人声特征的前提下抑制环境噪声，提升识别稳定性。",
-        notes: [
-          "适用于嘈杂环境下的身份确认、说话人分析和语音留痕场景。",
-          "建议在多设备、多麦克风输入场景下结合增益和采样率配置一起使用。",
-        ],
-      },
-      {
-        key: "multi-voiceprint-identification",
-        label: "多人声纹识别",
-        description: "开启后可对会话中的多位说话人进行区分与识别，支持多人互动分析。",
-        notes: [
-          "适用于会议纪要、客服质检、多人访谈等需要区分说话人的场景。",
-          "建议先确认音频输入质量和说话人数量范围，以获得更稳定的识别效果。",
-        ],
-      },
-      {
-        key: "hardware-scene",
-        label: "硬件场景接入",
-        description: "开启后可适配硬件终端接入，统一管理设备侧互动能力。",
-        notes: [
-          "适用于机器人、屏显设备、会议终端等硬件一体化接入场景。",
-          "建议提前校验设备 SDK 版本和网络环境，确保链路能力兼容。",
-        ],
-      },
-      {
-        key: "snapshot",
-        label: "抽帧截图",
-        description: "开启后支持按房间或流进行截图，用于质检、审核和留档。",
-        notes: [
-          "抽帧截图适用于内容审核、会话取证和业务留痕等场景。",
-          "建议结合截图频率和存储策略使用，避免产生不必要的资源开销。",
-        ],
-      },
-      {
-        key: "callback",
-        label: "回调设置",
-        description: "开启后可接收关键事件回调，便于业务侧做状态同步与告警。",
-        notes: [
-          "建议在生产环境配置稳定的回调地址，并开启签名校验。",
-          "回调失败可能影响业务事件同步，建议配合重试和监控策略使用。",
-        ],
-      },
-      {
-        key: "rts-message",
-        label: "RTS 实时消息",
-        description: "开启后可在互动链路中发送低延时实时消息，用于控制和信令同步。",
-        notes: [
-          "适用于字幕透传、控制信令、状态同步等低延时交互场景。",
-          "建议结合消息频率限制和业务幂等处理，避免重复消费。",
-        ],
-      },
-      {
-        key: "cloud-recording",
-        label: "云端录制",
-        description: "开启后可使用云端录制能力，并按实际使用量计费。",
-        notes: [
-          "开启并使用云端录制功能将产生额外费用，详细计费规则请参见计费说明。",
-          "如需接收录制回调事件，完成功能配置后，请前往回调设置。",
-        ],
-      },
-    ];
+    const featureTabs = FEATURE_CONFIG_TABS;
     const activeFeature = featureTabs.find((tab) => tab.key === activeFeatureTab) ?? featureTabs[0];
     const activeFeatureEnabled = featureEnabledMap[activeFeature.key];
     const toggleActiveFeature = () => {
