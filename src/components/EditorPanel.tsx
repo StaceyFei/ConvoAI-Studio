@@ -1612,9 +1612,6 @@ export default function EditorPanel() {
                     <div className={`mt-1 text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>{group.description}</div>
                   </div>
                   <div className="flex shrink-0 items-start gap-2">
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] ${isDark ? "bg-zinc-800 text-zinc-300" : "bg-zinc-100 text-zinc-500"}`}>
-                      {group.values.length > 0 ? `${group.values.length} 项` : "待完善"}
-                    </span>
                     {isCapabilityEditing ? (
                       <div className="flex items-center gap-1.5">
                         <button
@@ -1644,21 +1641,41 @@ export default function EditorPanel() {
                           <Check className="h-3 w-3" />
                         </button>
                       </div>
-                    ) : !isAnotherCapabilityEditing ? (
+                    ) : (
                       <button
                         type="button"
-                        onClick={() => startCapabilityEditing(group.key)}
-                        className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border opacity-0 pointer-events-none transition-all group-hover/capability:pointer-events-auto group-hover/capability:opacity-100 ${
+                        onClick={() => {
+                          if (!isAnotherCapabilityEditing) startCapabilityEditing(group.key);
+                        }}
+                        disabled={isAnotherCapabilityEditing}
+                        className={`relative inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-all ${
                           isDark
-                            ? "border-blue-500/10 bg-blue-500/10 text-blue-300 hover:border-zinc-800/80 hover:bg-zinc-900/70 hover:text-zinc-200"
-                            : "border-blue-100/80 bg-blue-50/85 text-blue-600 hover:border-zinc-200 hover:bg-white/90 hover:text-zinc-700"
+                            ? "border-white/8 bg-zinc-950/55 text-zinc-300"
+                            : "border-zinc-200/80 bg-white/85 text-zinc-500"
+                        } ${
+                          isAnotherCapabilityEditing
+                            ? "cursor-default"
+                            : isDark
+                              ? "hover:border-zinc-800/80 hover:bg-zinc-900/70 hover:text-zinc-200"
+                              : "hover:border-zinc-200 hover:bg-white/90 hover:text-zinc-700"
                         }`}
-                        title={`编辑${group.title}`}
-                        aria-label={`编辑${group.title}`}
+                        title={isAnotherCapabilityEditing ? `${group.values.length} 项` : `编辑${group.title}`}
+                        aria-label={isAnotherCapabilityEditing ? `${group.values.length} 项` : `编辑${group.title}`}
                       >
-                        <Pencil className="h-3 w-3" />
+                        <span
+                          className={`absolute inset-0 flex items-center justify-center text-[10px] font-medium leading-none transition-all ${
+                            isAnotherCapabilityEditing
+                              ? "opacity-100"
+                              : "opacity-100 group-hover/capability:scale-90 group-hover/capability:opacity-0"
+                          }`}
+                        >
+                          {group.values.length > 0 ? `${group.values.length}项` : "待完善"}
+                        </span>
+                        {!isAnotherCapabilityEditing ? (
+                          <Pencil className="absolute h-3 w-3 opacity-0 transition-all group-hover/capability:scale-100 group-hover/capability:opacity-100" />
+                        ) : null}
                       </button>
-                    ) : null}
+                    )}
                   </div>
                 </div>
                 <div className="mt-3 space-y-3">
