@@ -1,6 +1,5 @@
-import { AudioLines, Bot, Boxes, Check, ChevronDown, GitBranch, Pencil, Plus, Search, ShieldCheck, Sparkles, X } from "lucide-react";
+import { AudioLines, Bot, Boxes, Check, ChevronDown, GitBranch, Pencil, Plus, Search, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FEATURE_CONFIG_TABS } from "@/lib/featureConfigs";
 import { useWorkspaceStore } from "../store/workspace";
 import { ModeSwitcher } from "./CenterHeaderControls";
 
@@ -27,10 +26,9 @@ export default function EditorPanel() {
   const [isAsrAdvancedOpen, setIsAsrAdvancedOpen] = useState(false);
   const [isLlmAdvancedOpen, setIsLlmAdvancedOpen] = useState(false);
   const [isTtsAdvancedOpen, setIsTtsAdvancedOpen] = useState(false);
-  const [activeCapabilityEditKey, setActiveCapabilityEditKey] = useState<null | "features" | "tools" | "skills">(null);
-  const [openCapabilityPicker, setOpenCapabilityPicker] = useState<null | "features" | "tools" | "skills">(null);
-  const [capabilitySearch, setCapabilitySearch] = useState<Record<"features" | "tools" | "skills", string>>({
-    features: "",
+  const [activeCapabilityEditKey, setActiveCapabilityEditKey] = useState<null | "tools" | "skills">(null);
+  const [openCapabilityPicker, setOpenCapabilityPicker] = useState<null | "tools" | "skills">(null);
+  const [capabilitySearch, setCapabilitySearch] = useState<Record<"tools" | "skills", string>>({
     tools: "",
     skills: "",
   });
@@ -186,30 +184,13 @@ export default function EditorPanel() {
           .filter(Boolean)
       )
     );
-  const defaultFeatureValues = isBlankPreset ? [] : ["云端录制", "RTS 实时消息"];
   const defaultToolValues = isBlankPreset ? [] : ["知识检索 MCP", "工单系统 MCP"];
   const defaultSkillValues = isBlankPreset ? [] : ["意图分类 Skill", "摘要生成 Skill"];
-  const rawFeatureValues = parsedConfig?.Config?.FeatureConfig?.EnabledFeatures;
   const rawToolValues = parsedConfig?.Config?.FunctionCallingConfig?.Tools;
   const rawSkillValues = parsedConfig?.Config?.SkillConfig?.Skills;
-  const currentFeatureValues = (Array.isArray(rawFeatureValues) ? normalizeStringList(rawFeatureValues) : defaultFeatureValues)
-    .filter((item) => item !== "AI VAD");
   const currentToolValues = Array.isArray(rawToolValues) ? normalizeStringList(rawToolValues) : defaultToolValues;
   const currentSkillValues = Array.isArray(rawSkillValues) ? normalizeStringList(rawSkillValues) : defaultSkillValues;
   const capabilityGroups = [
-    {
-      key: "features" as const,
-      title: "高级功能",
-      description: "默认启用的互动与智能能力",
-      icon: ShieldCheck,
-      values: currentFeatureValues,
-      emptyText: "待配置",
-      options: FEATURE_CONFIG_TABS.map((feature) => ({
-        value: feature.label,
-        label: feature.label,
-        description: feature.description,
-      })),
-    },
     {
       key: "tools" as const,
       title: "工具 / MCP",
@@ -275,10 +256,6 @@ export default function EditorPanel() {
     nextConfig.Config.TTSConfig.ProviderParams.audio.speech_rate = nextConfig.Config.TTSConfig.ProviderParams.audio.speech_rate ?? 0;
     nextConfig.Config.TTSConfig.ProviderParams.audio.volume = nextConfig.Config.TTSConfig.ProviderParams.audio.volume ?? 0;
     nextConfig.Config.TTSConfig.ProviderParams.audio.pitch = nextConfig.Config.TTSConfig.ProviderParams.audio.pitch ?? 0;
-    nextConfig.Config.FeatureConfig = nextConfig.Config.FeatureConfig || {};
-    nextConfig.Config.FeatureConfig.EnabledFeatures = Array.isArray(nextConfig.Config.FeatureConfig.EnabledFeatures)
-      ? nextConfig.Config.FeatureConfig.EnabledFeatures
-      : [];
     nextConfig.Config.FunctionCallingConfig = nextConfig.Config.FunctionCallingConfig || {};
     nextConfig.Config.FunctionCallingConfig.Tools = Array.isArray(nextConfig.Config.FunctionCallingConfig.Tools)
       ? nextConfig.Config.FunctionCallingConfig.Tools
@@ -291,12 +268,8 @@ export default function EditorPanel() {
     updater(nextConfig);
     updateJson(JSON.stringify(nextConfig, null, 2));
   };
-  const updateCapabilityValues = (key: "features" | "tools" | "skills", values: string[]) => {
+  const updateCapabilityValues = (key: "tools" | "skills", values: string[]) => {
     updateConfig((draft) => {
-      if (key === "features") {
-        draft.Config.FeatureConfig.EnabledFeatures = values;
-        return;
-      }
       if (key === "tools") {
         draft.Config.FunctionCallingConfig.Tools = values;
         return;
@@ -304,18 +277,16 @@ export default function EditorPanel() {
       draft.Config.SkillConfig.Skills = values;
     });
   };
-  const addCapabilityValue = (key: "features" | "tools" | "skills", value: string) => {
-    const currentValues =
-      key === "features" ? currentFeatureValues : key === "tools" ? currentToolValues : currentSkillValues;
+  const addCapabilityValue = (key: "tools" | "skills", value: string) => {
+    const currentValues = key === "tools" ? currentToolValues : currentSkillValues;
     updateCapabilityValues(key, normalizeStringList([...currentValues, value]));
     setOpenCapabilityPicker(null);
   };
-  const removeCapabilityValue = (key: "features" | "tools" | "skills", value: string) => {
-    const currentValues =
-      key === "features" ? currentFeatureValues : key === "tools" ? currentToolValues : currentSkillValues;
+  const removeCapabilityValue = (key: "tools" | "skills", value: string) => {
+    const currentValues = key === "tools" ? currentToolValues : currentSkillValues;
     updateCapabilityValues(key, currentValues.filter((item) => item !== value));
   };
-  const startCapabilityEditing = (key: "features" | "tools" | "skills") => {
+  const startCapabilityEditing = (key: "tools" | "skills") => {
     setCapabilityEditingSnapshot(currentJson);
     setOpenCapabilityPicker(null);
     setActiveCapabilityEditKey(key);
@@ -1724,7 +1695,7 @@ export default function EditorPanel() {
                         }`}
                       >
                         <Plus className="h-3 w-3" />
-                        <span>{group.key === "features" ? "添加高级功能" : group.key === "tools" ? "添加 MCP" : "添加 Skill"}</span>
+                        <span>{group.key === "tools" ? "添加 MCP" : "添加 Skill"}</span>
                       </button>
 
                       {openCapabilityPicker === group.key ? (
@@ -1747,7 +1718,7 @@ export default function EditorPanel() {
                                 onChange={(event) =>
                                   setCapabilitySearch((current) => ({ ...current, [group.key]: event.target.value }))
                                 }
-                                placeholder={group.key === "features" ? "搜索高级功能" : group.key === "tools" ? "搜索 MCP" : "搜索 Skill"}
+                                placeholder={group.key === "tools" ? "搜索 MCP" : "搜索 Skill"}
                                 className={`w-full border-0 bg-transparent p-0 text-[11px] focus:outline-none ${
                                   isDark ? "text-zinc-100 placeholder:text-zinc-500" : "text-zinc-800 placeholder:text-zinc-400"
                                 }`}

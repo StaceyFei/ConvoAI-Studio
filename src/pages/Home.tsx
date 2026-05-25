@@ -288,7 +288,6 @@ const navItems: Array<NavItem | NavGroup> = [
       { key: "tools", label: "我的Tools", description: "维护各类 MCP", icon: Boxes },
       { key: "skills", label: "我的Skills", description: "维护自定义 Skill", icon: Settings2 },
       { key: "voices", label: "我的复刻声音", description: "管理购买与训练音色", icon: AudioLines },
-      { key: "feature-config", label: "高级功能开通", description: "维护高级能力配置项", icon: Settings2 },
       { key: "developer-community", label: "社区", description: "上传或下载社区 MCP 与 Skills", icon: Users },
     ],
   },
@@ -324,6 +323,7 @@ const navItems: Array<NavItem | NavGroup> = [
     description: "维护平台接入与资源配置",
     children: [
       { key: "app-keys", label: "火山秘钥和Key管理", description: "维护火山 AppID、秘钥与 Key", icon: Bot },
+      { key: "feature-config", label: "服务开通", description: "维护服务能力开通项", icon: Settings2 },
       { key: "resource-packages", label: "三方资源管理", description: "维护三方资源接入与配额信息", icon: Package },
     ],
   },
@@ -404,8 +404,8 @@ const sectionCopy: Record<
     actionLabel: "新增业务标识",
   },
   "feature-config": {
-    title: "高级功能开通",
-    description: "集中维护各类高级能力配置项和默认策略，方便统一开通与管理。",
+    title: "服务开通",
+    description: "集中维护各类服务能力开通项和默认策略，方便统一开通与管理。",
     actionLabel: "保存配置",
   },
   "resource-packages": {
@@ -1859,7 +1859,7 @@ export default function Home() {
               {
                 key: "template",
                 title: "场景模板",
-                description: "从预设场景模板快速创建，直接复用模型、音色和高级功能开通。",
+                description: "从预设场景模板快速创建，直接复用模型、音色和服务开通配置。",
                 action: handleSelectAgentTemplate,
                 coverUrl: scenarioTemplateCoverUrl,
               },
@@ -2926,7 +2926,7 @@ export default function Home() {
         <div className={`text-base font-semibold ${strongTextClass}`}>接入流程</div>
         <div className={`mt-4 space-y-3 text-xs ${subduedTextClass}`}>
           <div>1. 配置电话线路供应商、SIP 域名和鉴权信息</div>
-          <div>2. 绑定 AppID、秘钥和高级功能开通</div>
+          <div>2. 绑定 AppID、秘钥和服务开通</div>
           <div>3. 设置呼入路由、外呼策略和机器人接待话术</div>
           <div>4. 完成线路拨测后发布到生产环境</div>
         </div>
