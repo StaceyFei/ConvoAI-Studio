@@ -1245,11 +1245,32 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
       const sharedCallState = {
         currentCallInfo: runtimeCallInfo,
       };
+      const asrProvider = typeof parsed?.Config?.ASRConfig?.Provider === 'string' ? parsed.Config.ASRConfig.Provider : '';
 
       if (!configOverride) {
         get().updateJson(nextJson);
       }
       
+      if (asrProvider && asrProvider !== 'volcano') {
+        set({
+          isCalling: true,
+          ...sharedCallState,
+          callError: JSON.stringify(
+            {
+              EventType: 1,
+              RunStage: "asr",
+              ErrorInfo: {
+                Errorcode: 1003004,
+                Reason: "ASR 服务返回的数据格式不符合预期。如果使用自定义 ASR，请检查其返回格式是否符合协议。",
+              },
+            },
+            null,
+            2
+          )
+        });
+        return;
+      }
+
       // 仅在 TaskId 为特定值时模拟深层的业务报错，以便正常情况下可以展示通话成功的 UI
       if (parsed.TaskId === 'error_appid') {
         set({ 
