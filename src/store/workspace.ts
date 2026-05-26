@@ -376,7 +376,7 @@ function normalizeAppBusinessItems(items: unknown): AppBusinessItem[] {
     .filter((item): item is AppBusinessItem => Boolean(item));
 }
 
-function normalizeAppServiceStatus(serviceStatus: unknown) {
+function normalizeAppServiceStatus(serviceStatus: unknown): Record<FeatureConfigTabKey, boolean> {
   const defaults = createDefaultAppServiceStatus();
   if (!serviceStatus || typeof serviceStatus !== 'object') return defaults;
 
@@ -391,7 +391,7 @@ function normalizeAppKeyList(appKeys: unknown): AppKeyItem[] {
   if (!Array.isArray(appKeys) || appKeys.length === 0) return defaultAppKeyList;
 
   return appKeys
-    .map((item, index) => {
+    .map<AppKeyItem | null>((item, index) => {
       if (!item || typeof item !== 'object') return null;
       const app = item as Partial<AppKeyItem>;
       const appId = typeof app.appId === 'string' && app.appId.trim() ? app.appId.trim() : `app_${10000 + index}`;
@@ -404,14 +404,16 @@ function normalizeAppKeyList(appKeys: unknown): AppKeyItem[] {
       const secondaryAppKey =
         typeof app.secondaryAppKey === 'string' && app.secondaryAppKey.trim() ? app.secondaryAppKey.trim() : undefined;
       const secondaryAppKeyEnabled = secondaryAppKey ? app.secondaryAppKeyEnabled !== false : false;
-      const activeKeySlot =
+      const activeKeySlot: AppKeyItem['activeKeySlot'] =
         app.activeKeySlot === 'secondary' && secondaryAppKey && secondaryAppKeyEnabled ? 'secondary' : 'primary';
+      const status: AppKeyItem['status'] =
+        app.status === '已启用' || app.status === '已禁用' ? app.status : '草稿';
 
       return {
         id: typeof app.id === 'string' && app.id.trim() ? app.id : `app-${index + 1}`,
         appId,
         name: typeof app.name === 'string' && app.name.trim() ? app.name.trim() : `应用_${index + 1}`,
-        status: app.status === '已启用' || app.status === '已禁用' ? app.status : '草稿',
+        status,
         createdAt:
           typeof app.createdAt === 'string' && app.createdAt.trim() ? app.createdAt : updatedAt,
         updatedAt,
@@ -423,7 +425,7 @@ function normalizeAppKeyList(appKeys: unknown): AppKeyItem[] {
         serviceStatus: normalizeAppServiceStatus(app.serviceStatus),
       };
     })
-    .filter((item): item is AppKeyItem => Boolean(item));
+    .filter((item): item is AppKeyItem => item !== null);
 }
 
 const defaultAppKeyList: AppKeyItem[] = [
