@@ -1,4 +1,4 @@
-import { AudioLines, Bot, Boxes, Check, ChevronDown, GitBranch, Pencil, Plus, Search, Sparkles, X } from "lucide-react";
+import { AudioLines, Bot, Boxes, Check, ChevronDown, Copy, GitBranch, Pencil, Plus, Search, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceStore } from "../store/workspace";
 import { ModeSwitcher } from "./CenterHeaderControls";
@@ -10,6 +10,8 @@ export default function EditorPanel() {
     agentDescription,
     setAgentDescription,
     currentJson,
+    currentAgentId,
+    agentList,
     orchestrationPreset,
     theme,
     updateJson,
@@ -26,6 +28,7 @@ export default function EditorPanel() {
   const [isAsrAdvancedOpen, setIsAsrAdvancedOpen] = useState(false);
   const [isLlmAdvancedOpen, setIsLlmAdvancedOpen] = useState(false);
   const [isTtsAdvancedOpen, setIsTtsAdvancedOpen] = useState(false);
+  const [isBotIdCopied, setIsBotIdCopied] = useState(false);
   const [activeCapabilityEditKey, setActiveCapabilityEditKey] = useState<null | "tools" | "skills">(null);
   const [openCapabilityPicker, setOpenCapabilityPicker] = useState<null | "tools" | "skills">(null);
   const [capabilitySearch, setCapabilitySearch] = useState<Record<"tools" | "skills", string>>({
@@ -167,6 +170,21 @@ export default function EditorPanel() {
   const systemMessages = parsedConfig?.Config?.LLMConfig?.SystemMessages;
   const promptText = Array.isArray(systemMessages) ? systemMessages.filter(Boolean).join("\n") || "待填写" : "待填写";
   const welcomeMessage = parsedConfig?.AgentConfig?.WelcomeMessage || "待填写";
+  const currentBotId = (
+    previewAgent?.botId ||
+    agentList.find((agent) => agent.id === currentAgentId)?.botId ||
+    ""
+  ).trim();
+  const handleCopyBotId = async () => {
+    if (!currentBotId) return;
+    try {
+      await navigator.clipboard.writeText(currentBotId);
+      setIsBotIdCopied(true);
+      window.setTimeout(() => setIsBotIdCopied(false), 1800);
+    } catch (error) {
+      console.error("Failed to copy botId", error);
+    }
+  };
   const normalizeStringList = (value: unknown) =>
     Array.from(
       new Set(
@@ -462,14 +480,14 @@ export default function EditorPanel() {
     isDark ? "text-zinc-300" : "text-zinc-600"
   }`;
   const buildToggleClassName = (checked: boolean) =>
-    `relative inline-flex h-4.5 w-8 items-center rounded-full border transition-colors ${
+    `relative inline-flex h-4 w-[30px] items-center rounded-full border transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/20 focus-visible:ring-offset-2 ${
       checked
-        ? (isDark ? "border-blue-400/35 bg-blue-500/65" : "border-blue-300 bg-blue-500/85")
-        : (isDark ? "border-white/8 bg-zinc-900" : "border-zinc-200 bg-zinc-200/80")
-    }`;
+        ? (isDark ? "border-blue-400/20 bg-blue-500/80" : "border-blue-500/20 bg-blue-500/80")
+        : (isDark ? "border-zinc-700/80 bg-zinc-800" : "border-zinc-300/80 bg-zinc-100")
+    } ${isDark ? "focus-visible:ring-offset-zinc-950" : "focus-visible:ring-offset-white"}`;
   const buildToggleKnobClassName = (checked: boolean) =>
-    `inline-block h-3.5 w-3.5 rounded-full bg-white shadow-[0_1px_4px_rgba(0,0,0,0.12)] transition-transform ${
-      checked ? "translate-x-4" : "translate-x-0.5"
+    `inline-block h-[11px] w-[11px] rounded-full bg-white/95 shadow-none transition-transform duration-200 ease-out ${
+      checked ? "translate-x-[13px]" : "translate-x-0.5"
     }`;
   const sliderTrackWrapClass = "min-w-0 flex-1";
   const compactSelectClass = `h-8 min-w-0 rounded-lg border px-3 text-[12px] focus:outline-none ${
@@ -598,7 +616,27 @@ export default function EditorPanel() {
             : "border-blue-100 bg-gradient-to-br from-blue-50 via-white to-violet-50"
         }`}>
           <div className="flex flex-col gap-0">
-            <div className="flex h-8 items-center justify-end">
+            <div className="flex min-h-8 items-center justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                {currentBotId ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className={`truncate text-[13px] leading-5 ${isDark ? "text-zinc-500" : "text-zinc-400"}`}>{`BotId：${currentBotId}`}</span>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyBotId()}
+                      className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors ${
+                        isDark
+                          ? "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                          : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                      }`}
+                      title={isBotIdCopied ? "已复制" : "复制 BotId"}
+                      aria-label={isBotIdCopied ? "已复制" : "复制 BotId"}
+                    >
+                      {isBotIdCopied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <div className="flex items-center gap-2">
                 {isEditing ? (
                   <>
@@ -649,19 +687,21 @@ export default function EditorPanel() {
                 )}
               </div>
             </div>
-            <div className="flex h-10 items-center justify-between gap-4">
-              <div className="flex h-10 min-w-0 flex-1 items-center">
-                <div className={isEditing ? titleEditingShellClassName : titleFieldShellClassName}>
-                  {isEditing ? (
-                    <input
-                      value={agentName}
-                      onChange={(event) => setAgentName(event.target.value)}
-                      className={inputClassName}
-                      placeholder="输入智能体名称"
-                    />
-                  ) : (
-                    <div className={titleDisplayClassName}>{agentName}</div>
-                  )}
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <div className={`flex h-10 min-w-0 items-center ${isEditing ? "" : "pb-0.5"}`}>
+                  <div className={isEditing ? titleEditingShellClassName : titleFieldShellClassName}>
+                    {isEditing ? (
+                      <input
+                        value={agentName}
+                        onChange={(event) => setAgentName(event.target.value)}
+                        className={inputClassName}
+                        placeholder="输入智能体名称"
+                      />
+                    ) : (
+                      <div className={titleDisplayClassName}>{agentName}</div>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="h-8 w-8 shrink-0" />
@@ -1640,7 +1680,7 @@ export default function EditorPanel() {
                               : "opacity-100 group-hover/capability:scale-90 group-hover/capability:opacity-0"
                           }`}
                         >
-                          {group.values.length > 0 ? `${group.values.length}项` : "待完善"}
+                          {group.values.length > 0 ? `${group.values.length}项` : "0项"}
                         </span>
                         {!isAnotherCapabilityEditing ? (
                           <Pencil className="absolute h-3 w-3 opacity-0 transition-all group-hover/capability:scale-100 group-hover/capability:opacity-100" />

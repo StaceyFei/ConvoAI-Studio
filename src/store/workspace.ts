@@ -7,6 +7,7 @@ import {
   defaultThirdPartyResources,
   findResourceById,
 } from '@/lib/thirdPartyResources';
+import { FEATURE_CONFIG_TABS, type FeatureConfigTabKey } from '@/lib/featureConfigs';
 
 export interface ChatMessage {
   id: string;
@@ -165,7 +166,22 @@ export interface AppKeyItem {
   id: string;
   appId: string;
   name: string;
-  status: '已启用' | '草稿';
+  status: '已启用' | '草稿' | '已禁用';
+  createdAt: string;
+  updatedAt: string;
+  primaryAppKey: string;
+  secondaryAppKey?: string;
+  secondaryAppKeyEnabled: boolean;
+  activeKeySlot: 'primary' | 'secondary';
+  businessItems: AppBusinessItem[];
+  serviceStatus: Record<FeatureConfigTabKey, boolean>;
+}
+
+export interface AppBusinessItem {
+  id: string;
+  name: string;
+  businessId: string;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -314,9 +330,162 @@ const DEFAULT_RUNTIME_IDS = {
   targetUserId: "demo_user",
 } as const;
 
+function createDefaultAppServiceStatus() {
+  return FEATURE_CONFIG_TABS.reduce<Record<FeatureConfigTabKey, boolean>>((acc, feature) => {
+    acc[feature.key] = false;
+    return acc;
+  }, {} as Record<FeatureConfigTabKey, boolean>);
+}
+
+function normalizeAppBusinessItems(items: unknown): AppBusinessItem[] {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map((item, index) => {
+      if (!item || typeof item !== 'object') return null;
+      const business = item as Partial<AppBusinessItem> & { scene?: string };
+      const name =
+        typeof business.name === 'string' && business.name.trim()
+          ? business.name.trim()
+          : typeof business.scene === 'string' && business.scene.trim()
+            ? business.scene.trim()
+            : `业务标识_${index + 1}`;
+      const businessId =
+        typeof business.businessId === 'string' && business.businessId.trim()
+          ? business.businessId.trim()
+          : `business_${index + 1}`;
+      const createdAt =
+        typeof business.createdAt === 'string' && business.createdAt.trim()
+          ? business.createdAt
+          : typeof business.updatedAt === 'string' && business.updatedAt.trim()
+            ? business.updatedAt
+            : formatWorkspaceDateTime();
+      const updatedAt =
+        typeof business.updatedAt === 'string' && business.updatedAt.trim()
+          ? business.updatedAt
+          : createdAt;
+
+      return {
+        id: typeof business.id === 'string' && business.id.trim() ? business.id : `biz-${index + 1}`,
+        name,
+        businessId,
+        createdAt,
+        updatedAt,
+      };
+    })
+    .filter((item): item is AppBusinessItem => Boolean(item));
+}
+
+function normalizeAppServiceStatus(serviceStatus: unknown) {
+  const defaults = createDefaultAppServiceStatus();
+  if (!serviceStatus || typeof serviceStatus !== 'object') return defaults;
+
+  const source = serviceStatus as Partial<Record<FeatureConfigTabKey, boolean>>;
+  for (const feature of FEATURE_CONFIG_TABS) {
+    defaults[feature.key] = Boolean(source[feature.key]);
+  }
+  return defaults;
+}
+
+function normalizeAppKeyList(appKeys: unknown): AppKeyItem[] {
+  if (!Array.isArray(appKeys) || appKeys.length === 0) return defaultAppKeyList;
+
+  return appKeys
+    .map((item, index) => {
+      if (!item || typeof item !== 'object') return null;
+      const app = item as Partial<AppKeyItem>;
+      const appId = typeof app.appId === 'string' && app.appId.trim() ? app.appId.trim() : `app_${10000 + index}`;
+      const updatedAt =
+        typeof app.updatedAt === 'string' && app.updatedAt.trim() ? app.updatedAt : formatWorkspaceDateTime();
+      const primaryAppKey =
+        typeof app.primaryAppKey === 'string' && app.primaryAppKey.trim()
+          ? app.primaryAppKey.trim()
+          : `ak_${appId}_${createRandomSuffix(18)}`;
+      const secondaryAppKey =
+        typeof app.secondaryAppKey === 'string' && app.secondaryAppKey.trim() ? app.secondaryAppKey.trim() : undefined;
+      const secondaryAppKeyEnabled = secondaryAppKey ? app.secondaryAppKeyEnabled !== false : false;
+      const activeKeySlot =
+        app.activeKeySlot === 'secondary' && secondaryAppKey && secondaryAppKeyEnabled ? 'secondary' : 'primary';
+
+      return {
+        id: typeof app.id === 'string' && app.id.trim() ? app.id : `app-${index + 1}`,
+        appId,
+        name: typeof app.name === 'string' && app.name.trim() ? app.name.trim() : `应用_${index + 1}`,
+        status: app.status === '已启用' || app.status === '已禁用' ? app.status : '草稿',
+        createdAt:
+          typeof app.createdAt === 'string' && app.createdAt.trim() ? app.createdAt : updatedAt,
+        updatedAt,
+        primaryAppKey,
+        secondaryAppKey,
+        secondaryAppKeyEnabled,
+        activeKeySlot,
+        businessItems: normalizeAppBusinessItems(app.businessItems),
+        serviceStatus: normalizeAppServiceStatus(app.serviceStatus),
+      };
+    })
+    .filter((item): item is AppKeyItem => Boolean(item));
+}
+
 const defaultAppKeyList: AppKeyItem[] = [
-  { id: "app-1", appId: "app_10001", name: "正式环境", status: "已启用", updatedAt: "2026-05-14 10:22" },
-  { id: "app-2", appId: "app_10002", name: "测试环境", status: "草稿", updatedAt: "2026-05-13 18:40" },
+  {
+    id: "app-1",
+    appId: "app_10001",
+    name: "直播互动助手",
+    status: "已启用",
+    createdAt: "2026-05-09 09:30",
+    updatedAt: "2026-05-14 10:22",
+    primaryAppKey: "ak_live_primary_6f3b2c1d9e8a7b5c4d",
+    secondaryAppKey: "ak_live_secondary_8e4c2b1d7f6a5c3b9d",
+    secondaryAppKeyEnabled: true,
+    activeKeySlot: "primary",
+    businessItems: [
+      {
+        id: "biz-live-1",
+        name: "直播互动",
+        businessId: "live_interaction",
+        createdAt: "2026-05-09 09:35",
+        updatedAt: "2026-05-14 10:22",
+      },
+      {
+        id: "biz-live-2",
+        name: "主播陪伴",
+        businessId: "host_companion",
+        createdAt: "2026-05-10 13:20",
+        updatedAt: "2026-05-13 18:00",
+      },
+    ],
+    serviceStatus: {
+      ...createDefaultAppServiceStatus(),
+      "cloud-recording": true,
+      callback: true,
+      "voiceprint-denoise": true,
+    },
+  },
+  {
+    id: "app-2",
+    appId: "app_10002",
+    name: "智能客服坐席",
+    status: "草稿",
+    createdAt: "2026-05-08 15:16",
+    updatedAt: "2026-05-13 18:40",
+    primaryAppKey: "ak_service_primary_4c9d2a7b6e5f1c8d3a",
+    secondaryAppKeyEnabled: false,
+    activeKeySlot: "primary",
+    businessItems: [
+      {
+        id: "biz-service-1",
+        name: "售后回访",
+        businessId: "customer_care",
+        createdAt: "2026-05-08 15:20",
+        updatedAt: "2026-05-13 18:40",
+      },
+    ],
+    serviceStatus: {
+      ...createDefaultAppServiceStatus(),
+      snapshot: true,
+      "rts-message": true,
+    },
+  },
 ];
 
 type RuntimeDefaultsOptions = {
@@ -1552,7 +1721,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
   }),
   merge: (persistedState, currentState) => {
     const persisted = (persistedState ?? {}) as Partial<PersistedWorkspaceState>;
-    const appKeyList = Array.isArray(persisted.appKeyList) && persisted.appKeyList.length > 0 ? persisted.appKeyList : defaultAppKeyList;
+    const appKeyList = normalizeAppKeyList(persisted.appKeyList);
     const resourceList = normalizeResourceList(persisted.resourceList);
     const agentList = normalizeAgentList(persisted.agentList, resourceList, appKeyList);
     const selectedAgent = getSelectedAgent(agentList, persisted.currentAgentId);

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import {
+  ArrowLeftRight,
   ArrowUp,
   AudioLines,
   BarChart3,
@@ -16,6 +18,8 @@ import {
   Copy,
   Download,
   EllipsisVertical,
+  Eye,
+  EyeOff,
   GitBranch,
   Loader2,
   Moon,
@@ -23,8 +27,10 @@ import {
   Pencil,
   PhoneCall,
   Plus,
+  Search,
   Settings2,
   ShieldCheck,
+  Sparkles,
   Sun,
   Trash2,
   Upload,
@@ -37,6 +43,7 @@ import Workspace from "@/components/Workspace";
 import {
   type AssistantTarget,
   type AgentSummary,
+  type AppBusinessItem,
   type AppKeyItem,
   type KnowledgeBaseItem,
   type SkillItem,
@@ -77,14 +84,6 @@ type NavGroup = {
     description: string;
     icon: typeof Bot;
   }>;
-};
-
-type BusinessIdItem = {
-  id: string;
-  name: string;
-  businessId: string;
-  scene: string;
-  status: "已启用" | "测试中";
 };
 
 type LicenseItem = {
@@ -138,6 +137,38 @@ type ResourceFormState = {
 type ResourceFilter = "全部" | ResourceKind;
 
 type AgentCreateMode = "template" | "custom";
+
+type DeleteDialogState = {
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  onConfirm: () => void;
+};
+
+type CreateAppDialogState = {
+  open: boolean;
+  name: string;
+};
+
+type CreateBusinessDialogState = {
+  appId: string;
+  appName: string;
+  name: string;
+  businessId: string;
+} | null;
+
+type EditAppDialogState = {
+  id: string;
+  name: string;
+} | null;
+
+type EditBusinessDialogState = {
+  appId: string;
+  appName: string;
+  businessItemId: string;
+  name: string;
+  businessId: string;
+} | null;
 
 type AgentTemplate = {
   id: string;
@@ -280,7 +311,7 @@ const navItems: Array<NavItem | NavGroup> = [
       { key: "agents", label: "我的智能体", description: "展示智能体列表", icon: Bot },
       { key: "knowledge", label: "我的知识库", description: "管理知识文档与索引", icon: BookOpen },
       { key: "tools", label: "我的Tools", description: "维护各类 MCP", icon: Boxes },
-      { key: "skills", label: "我的Skills", description: "维护自定义 Skill", icon: Settings2 },
+      { key: "skills", label: "我的Skills", description: "维护自定义 Skill", icon: Sparkles },
       { key: "voices", label: "我的复刻声音", description: "管理购买与训练音色", icon: AudioLines },
       { key: "developer-community", label: "社区", description: "上传或下载社区 MCP 与 Skills", icon: Users },
     ],
@@ -293,7 +324,7 @@ const navItems: Array<NavItem | NavGroup> = [
     children: [
       { key: "ai-dev-tools", label: "集成到AI开发工具", description: "接入 IDE 与开发工具", icon: GitBranch },
       { key: "env-vars", label: "环境变量", description: "维护接入环境变量配置", icon: Settings2 },
-      { key: "volcengine-deploy", label: "一键部署到火山引擎", description: "快速部署到火山引擎", icon: Package },
+      { key: "volcengine-deploy", label: "一键部署到火山引擎", description: "快速部署到火山引擎", icon: Upload },
       { key: "phone-line-deploy", label: "部署到电话线路", description: "接入呼入呼出电话线路", icon: PhoneCall },
     ],
   },
@@ -305,9 +336,9 @@ const navItems: Array<NavItem | NavGroup> = [
     children: [
       { key: "latency-analysis", label: "延时分析", description: "查看链路延时拆解", icon: BarChart3 },
       { key: "quality-analysis", label: "质量分析", description: "查看质量分布与波动", icon: ShieldCheck },
-      { key: "operations-analysis", label: "运营分析", description: "分析应用、智能体与活跃用户趋势", icon: Users },
+      { key: "operations-analysis", label: "运营分析", description: "分析应用、智能体与活跃用户趋势", icon: ArrowLeftRight },
       { key: "log-analysis", label: "日志分析", description: "查看会话与错误日志", icon: BadgeInfo },
-      { key: "usage", label: "用量统计", description: "按 AppID 和智能体统计", icon: BadgeInfo },
+      { key: "usage", label: "用量统计", description: "按 AppID 和智能体统计", icon: Download },
     ],
   },
   {
@@ -316,8 +347,7 @@ const navItems: Array<NavItem | NavGroup> = [
     label: "设置",
     description: "维护平台接入与资源配置",
     children: [
-      { key: "app-keys", label: "火山秘钥和Key管理", description: "维护火山 AppID、秘钥与 Key", icon: Bot },
-      { key: "feature-config", label: "服务开通", description: "维护服务能力开通项", icon: Settings2 },
+      { key: "app-keys", label: "应用管理", description: "维护应用、AppKey、业务标识与服务开通", icon: Copy },
       { key: "resource-packages", label: "三方资源管理", description: "维护三方资源接入与配额信息", icon: Package },
     ],
   },
@@ -340,7 +370,7 @@ const sectionCopy: Record<
   knowledge: {
     title: "我的知识库",
     description: "统一维护知识文档、索引构建和召回状态，支持知识的增删改查与管理。",
-    actionLabel: "新建知识库",
+    actionLabel: "创建知识库",
   },
   "ai-dev-tools": {
     title: "集成到AI开发工具",
@@ -388,9 +418,9 @@ const sectionCopy: Record<
     actionLabel: "导出延时报告",
   },
   "app-keys": {
-    title: "火山秘钥和Key管理",
-    description: "维护火山引擎 AppID、秘钥和 Key 的启用状态，便于开发接入与轮换。",
-    actionLabel: "新增秘钥",
+    title: "应用管理",
+    description: "统一维护应用名称、AppID、主副 AppKey、业务标识、临时 Token 与服务开通配置。",
+    actionLabel: "创建应用",
   },
   "business-ids": {
     title: "业务标识",
@@ -405,7 +435,7 @@ const sectionCopy: Record<
   "resource-packages": {
     title: "三方资源管理",
     description: "维护三方资源的接入信息、额度余量和生效状态，支持统一查看与管理。",
-    actionLabel: "新增资源",
+    actionLabel: "创建资源",
   },
   "license-management": {
     title: "License统计",
@@ -420,7 +450,7 @@ const sectionCopy: Record<
   tools: {
     title: "我的Tools",
     description: "统一维护用户创建的 MCP 工具，支持新增、查看、编辑和删除。",
-    actionLabel: "新建 MCP",
+    actionLabel: "创建 MCP",
   },
   skills: {
     title: "我的Skills",
@@ -445,7 +475,37 @@ function createId(prefix: string) {
 }
 
 function formatDateTime() {
-  return new Date().toLocaleString("zh-CN", { hour12: false });
+  return new Date().toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+function formatDisplayDateTime(value: string) {
+  if (/^\d{4}[-/]\d{2}[-/]\d{2}\s\d{2}:\d{2}:\d{2}$/.test(value)) return value;
+  if (/^\d{4}[-/]\d{2}[-/]\d{2}\s\d{2}:\d{2}$/.test(value)) return `${value}:00`;
+  return value;
+}
+
+function createAppSecret(prefix = "ak") {
+  return `${prefix}_${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createDefaultServiceStatus() {
+  return FEATURE_CONFIG_TABS.reduce<Record<FeatureConfigTabKey, boolean>>((acc, feature) => {
+    acc[feature.key] = false;
+    return acc;
+  }, {} as Record<FeatureConfigTabKey, boolean>);
+}
+
+function maskAppSecret(secret: string) {
+  if (!secret) return "************";
+  return "*".repeat(Math.max(12, secret.length));
 }
 
 function createAssistantWelcomeMessage(target: "agent" | "mcp" | "skill"): AssistantDraftMessage {
@@ -511,21 +571,6 @@ export default function Home() {
     setAssistantMemory,
     setChatInput,
   } = useWorkspaceStore();
-  const [businessIdList, setBusinessIdList] = useState<BusinessIdItem[]>([
-    { id: "biz-1", name: "直播互动", businessId: "live_interaction", scene: "直播", status: "已启用" },
-    { id: "biz-2", name: "客服回访", businessId: "customer_care", scene: "售后", status: "测试中" },
-  ]);
-  const [selectedFeatureAppId, setSelectedFeatureAppId] = useState("小龙虾(69dc5e0f1fc5bf017632e7b4)");
-  const [activeFeatureTab, setActiveFeatureTab] = useState<FeatureConfigTabKey>("voiceprint-denoise");
-  const [featureEnabledMap, setFeatureEnabledMap] = useState<Record<FeatureConfigTabKey, boolean>>({
-    "cloud-recording": true,
-    snapshot: false,
-    callback: true,
-    "rts-message": false,
-    "hardware-scene": false,
-    "voiceprint-denoise": false,
-    "multi-voiceprint-identification": false,
-  });
   const [licenseList, setLicenseList] = useState<LicenseItem[]>([
     {
       id: "lic-1",
@@ -650,8 +695,24 @@ export default function Home() {
   const [agentNameInput, setAgentNameInput] = useState("");
   const [agentDescriptionInput, setAgentDescriptionInput] = useState("");
   const [agentActionMenuId, setAgentActionMenuId] = useState<string | null>(null);
-  const [pendingDeleteAgent, setPendingDeleteAgent] = useState<AgentSummary | null>(null);
+  const [pendingDeleteDialog, setPendingDeleteDialog] = useState<DeleteDialogState | null>(null);
+  const [createAppDialog, setCreateAppDialog] = useState<CreateAppDialogState>({ open: false, name: "" });
+  const [createBusinessDialog, setCreateBusinessDialog] = useState<CreateBusinessDialogState>(null);
+  const [editAppDialog, setEditAppDialog] = useState<EditAppDialogState>(null);
+  const [editBusinessDialog, setEditBusinessDialog] = useState<EditBusinessDialogState>(null);
   const [copiedAgentId, setCopiedAgentId] = useState<string | null>(null);
+  const [copiedAppId, setCopiedAppId] = useState<string | null>(null);
+  const [copiedBusinessId, setCopiedBusinessId] = useState<string | null>(null);
+  const [appSearchQuery, setAppSearchQuery] = useState("");
+  const [selectedAppDetailId, setSelectedAppDetailId] = useState<string | null>(null);
+  const [appActionMenuId, setAppActionMenuId] = useState<string | null>(null);
+  const [floatingAppActionMenu, setFloatingAppActionMenu] = useState<{
+    id: string;
+    top: number;
+    left: number;
+  } | null>(null);
+  const [visibleAppSecrets, setVisibleAppSecrets] = useState<Record<string, boolean>>({});
+  const [copiedAppSecretKey, setCopiedAppSecretKey] = useState<string | null>(null);
   const isDark = theme === "dark";
   const resolvedSidebarWidth = isSidebarCollapsed ? 52 : 232;
   const assistantLayoutRef = useRef<HTMLDivElement | null>(null);
@@ -691,6 +752,48 @@ export default function Home() {
       console.error("Failed to copy botId", error);
     }
   };
+
+  useEffect(() => {
+    if (selectedAppDetailId && !appKeyList.some((item) => item.id === selectedAppDetailId)) {
+      setSelectedAppDetailId(null);
+    }
+  }, [appKeyList, selectedAppDetailId]);
+
+  useEffect(() => {
+    if (!appActionMenuId) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("[data-app-action-menu-root='true']")) return;
+      setAppActionMenuId(null);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [appActionMenuId]);
+
+  useEffect(() => {
+    if (!appActionMenuId) {
+      setFloatingAppActionMenu(null);
+    }
+  }, [appActionMenuId]);
+
+  useEffect(() => {
+    if (!floatingAppActionMenu) return;
+
+    const handleViewportChange = () => {
+      setAppActionMenuId(null);
+      setFloatingAppActionMenu(null);
+    };
+
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+    return () => {
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [floatingAppActionMenu]);
 
   const getManagedProviderLabel = (model: string) => {
     const matched = resourceList.find((resource) => resource.modelOptions.some((option) => option.value === model));
@@ -1188,14 +1291,20 @@ export default function Home() {
     }
   };
 
-  const handleDeleteAgent = (agent: AgentSummary) => {
-    setPendingDeleteAgent(agent);
+  const openDeleteDialog = (title: string, description: string, onConfirm: () => void, confirmLabel = "确认删除") => {
+    setPendingDeleteDialog({ title, description, onConfirm, confirmLabel });
   };
 
-  const handleConfirmDeleteAgent = () => {
-    if (!pendingDeleteAgent) return;
-    removeAgent(pendingDeleteAgent.id);
-    setPendingDeleteAgent(null);
+  const handleDeleteAgent = (agent: AgentSummary) => {
+    openDeleteDialog("删除智能体", `确认删除智能体“${agent.name}”吗？删除后将从当前列表中移除。`, () => {
+      removeAgent(agent.id);
+    });
+  };
+
+  const handleConfirmDeleteDialog = () => {
+    if (!pendingDeleteDialog) return;
+    pendingDeleteDialog.onConfirm();
+    setPendingDeleteDialog(null);
   };
 
   const handleCloneVoice = () => {
@@ -1266,8 +1375,9 @@ export default function Home() {
   };
 
   const handleDeleteTool = (tool: ToolItem) => {
-    if (!window.confirm(`确认删除 MCP“${tool.name}”吗？`)) return;
-    deleteTool(tool.id);
+    openDeleteDialog("删除 MCP", `确认删除 MCP“${tool.name}”吗？删除后将从当前列表中移除。`, () => {
+      deleteTool(tool.id);
+    });
   };
 
   const openSkillForm = (draft?: Partial<SkillFormState>) => {
@@ -1310,8 +1420,9 @@ export default function Home() {
   };
 
   const handleDeleteSkill = (skill: SkillItem) => {
-    if (!window.confirm(`确认删除 Skill“${skill.name}”吗？`)) return;
-    deleteSkill(skill.id);
+    openDeleteDialog("删除 Skill", `确认删除 Skill“${skill.name}”吗？删除后将从当前列表中移除。`, () => {
+      deleteSkill(skill.id);
+    });
   };
 
   const buildToolDraftFromPrompt = (prompt: string): ToolFormState => {
@@ -1581,8 +1692,9 @@ ${draft.configJson}
   };
 
   const handleDeleteKnowledgeBase = (knowledge: KnowledgeBaseItem) => {
-    if (!window.confirm(`确认删除知识库“${knowledge.name}”吗？`)) return;
-    deleteKnowledgeBase(knowledge.id);
+    openDeleteDialog("删除知识库", `确认删除知识库“${knowledge.name}”吗？删除后将从当前列表中移除。`, () => {
+      deleteKnowledgeBase(knowledge.id);
+    });
   };
 
   const syncCurrentJsonAppId = (updater: (currentAppId: string) => string | null | undefined) => {
@@ -1599,62 +1711,264 @@ ${draft.configJson}
   };
 
   const handleCreateAppKey = () => {
-    const name = window.prompt("请输入秘钥名称", `应用_${appKeyList.length + 1}`)?.trim();
+    setCreateAppDialog({
+      open: true,
+      name: `应用_${appKeyList.length + 1}`,
+    });
+  };
+
+  const handleConfirmCreateAppKey = () => {
+    const name = createAppDialog.name.trim();
     if (!name) return;
     const nextAppKey: AppKeyItem = {
       id: createId("app"),
       appId: `app_${Math.random().toString().slice(2, 7)}`,
       name,
       status: "草稿",
+      createdAt: formatDateTime(),
       updatedAt: formatDateTime(),
+      primaryAppKey: createAppSecret("ak_main"),
+      secondaryAppKeyEnabled: false,
+      activeKeySlot: "primary",
+      businessItems: [],
+      serviceStatus: createDefaultServiceStatus(),
     };
     addAppKey(nextAppKey);
+    setCreateAppDialog({ open: false, name: "" });
     syncCurrentJsonAppId((currentAppId) => currentAppId || nextAppKey.appId);
   };
 
   const handleEditAppKey = (item: AppKeyItem) => {
-    const appId = window.prompt("请输入新的 AppID", item.appId)?.trim();
-    if (!appId) return;
-    patchAppKey(item.id, { appId, updatedAt: formatDateTime() });
-    syncCurrentJsonAppId((currentAppId) => (currentAppId === item.appId ? appId : currentAppId));
-  };
-
-  const handleDeleteAppKey = (item: AppKeyItem) => {
-    if (!window.confirm(`确认删除秘钥“${item.name}”吗？`)) return;
-    const remainingAppKeys = appKeyList.filter((entry) => entry.id !== item.id);
-    deleteAppKey(item.id);
-    syncCurrentJsonAppId((currentAppId) => {
-      if (currentAppId !== item.appId) return currentAppId;
-      return remainingAppKeys[0]?.appId ?? currentAppId;
+    setEditAppDialog({
+      id: item.id,
+      name: item.name,
     });
   };
 
-  const handleCreateBusinessId = () => {
-    const name = window.prompt("请输入业务标识名称", `业务_${businessIdList.length + 1}`)?.trim();
+  const handleConfirmEditAppKey = () => {
+    if (!editAppDialog) return;
+    const name = editAppDialog.name.trim();
     if (!name) return;
-    setBusinessIdList((prev) => [
-      {
-        id: createId("biz"),
-        name,
-        businessId: `biz_${Math.random().toString(36).slice(2, 8)}`,
-        scene: "新场景",
-        status: "测试中",
+    patchAppKey(editAppDialog.id, { name, updatedAt: formatDateTime() });
+    setEditAppDialog(null);
+  };
+
+  const handleDeleteAppKey = (item: AppKeyItem) => {
+    if (item.status === "已启用") {
+      window.alert("请先禁用应用，再执行删除。");
+      setAppActionMenuId(null);
+      return;
+    }
+    openDeleteDialog("删除应用", `确认删除应用“${item.name}”吗？删除后将从当前列表中移除。`, () => {
+      const remainingAppKeys = appKeyList.filter((entry) => entry.id !== item.id);
+      deleteAppKey(item.id);
+      setAppActionMenuId((current) => (current === item.id ? null : current));
+      syncCurrentJsonAppId((currentAppId) => {
+        if (currentAppId !== item.appId) return currentAppId;
+        return remainingAppKeys[0]?.appId ?? currentAppId;
+      });
+    });
+  };
+
+  const handleToggleAppStatus = (item: AppKeyItem) => {
+    patchAppKey(item.id, {
+      status: item.status === "已禁用" ? "已启用" : "已禁用",
+      updatedAt: formatDateTime(),
+    });
+    setAppActionMenuId(null);
+  };
+
+  const toggleAppSecretVisibility = (secretKey: string) => {
+    setVisibleAppSecrets((prev) => ({ ...prev, [secretKey]: !prev[secretKey] }));
+  };
+
+  const handleCopyAppSecret = async (item: AppKeyItem, slot: "primary" | "secondary", secret?: string) => {
+    if (!secret) return;
+    const secretKey = `${item.id}:${slot}`;
+    try {
+      await navigator.clipboard.writeText(secret);
+      setCopiedAppSecretKey(secretKey);
+      window.setTimeout(() => {
+        setCopiedAppSecretKey((current) => (current === secretKey ? null : current));
+      }, 1800);
+    } catch (error) {
+      console.error("Failed to copy app secret", error);
+    }
+  };
+
+  const handleCopyAppId = async (itemId: string, appId: string) => {
+    if (!appId) return;
+    try {
+      await navigator.clipboard.writeText(appId);
+      setCopiedAppId(itemId);
+      window.setTimeout(() => {
+        setCopiedAppId((current) => (current === itemId ? null : current));
+      }, 1800);
+    } catch (error) {
+      console.error("Failed to copy appId", error);
+    }
+  };
+
+  const handleCopyBusinessId = async (businessItemId: string, businessId: string) => {
+    if (!businessId) return;
+    try {
+      await navigator.clipboard.writeText(businessId);
+      setCopiedBusinessId(businessItemId);
+      window.setTimeout(() => {
+        setCopiedBusinessId((current) => (current === businessItemId ? null : current));
+      }, 1800);
+    } catch (error) {
+      console.error("Failed to copy businessId", error);
+    }
+  };
+
+  const handleAddSecondaryAppKey = (item: AppKeyItem) => {
+    if (item.secondaryAppKey) return;
+    patchAppKey(item.id, {
+      secondaryAppKey: createAppSecret("ak_sub"),
+      secondaryAppKeyEnabled: true,
+      updatedAt: formatDateTime(),
+    });
+  };
+
+  const handleToggleSecondaryAppKey = (item: AppKeyItem) => {
+    if (!item.secondaryAppKey) return;
+    const nextEnabled = !item.secondaryAppKeyEnabled;
+    patchAppKey(item.id, {
+      secondaryAppKeyEnabled: nextEnabled,
+      activeKeySlot: !nextEnabled && item.activeKeySlot === "secondary" ? "primary" : item.activeKeySlot,
+      updatedAt: formatDateTime(),
+    });
+  };
+
+  const handleDeleteSecondaryAppKey = (item: AppKeyItem) => {
+    if (!item.secondaryAppKey) return;
+    if (item.secondaryAppKeyEnabled) {
+      window.alert("请先停用副 AppKey，再执行删除。");
+      return;
+    }
+    openDeleteDialog("删除副 AppKey", `确认删除应用“${item.name}”的副 AppKey 吗？删除后将恢复为空状态。`, () => {
+      patchAppKey(item.id, {
+        secondaryAppKey: undefined,
+        secondaryAppKeyEnabled: false,
+        activeKeySlot: "primary",
+        updatedAt: formatDateTime(),
+      });
+    });
+  };
+
+  const handleSwitchActiveAppKey = (item: AppKeyItem) => {
+    if (!item.secondaryAppKey) {
+      window.alert("请先添加副 AppKey，再进行主/副 AppKey 切换。");
+      return;
+    }
+    if (!item.secondaryAppKeyEnabled) {
+      window.alert("请先启用副 AppKey，再进行主/副 AppKey 切换。");
+      return;
+    }
+    patchAppKey(item.id, {
+      activeKeySlot: item.activeKeySlot === "primary" ? "secondary" : "primary",
+      updatedAt: formatDateTime(),
+    });
+  };
+
+  const handleCreateBusinessId = (app: AppKeyItem) => {
+    setCreateBusinessDialog({
+      appId: app.id,
+      appName: app.name,
+      name: `业务_${app.businessItems.length + 1}`,
+      businessId: "",
+    });
+  };
+
+  const handleConfirmCreateBusinessId = () => {
+    if (!createBusinessDialog) return;
+    const app = appKeyList.find((entry) => entry.id === createBusinessDialog.appId);
+    if (!app) {
+      setCreateBusinessDialog(null);
+      return;
+    }
+    const name = createBusinessDialog.name.trim();
+    const businessId = createBusinessDialog.businessId.trim();
+    if (!name || !businessId) return;
+    const timestamp = formatDateTime();
+    patchAppKey(app.id, {
+      businessItems: [
+        {
+          id: createId("biz"),
+          name,
+          businessId,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+        ...app.businessItems,
+      ],
+      updatedAt: timestamp,
+    });
+    setCreateBusinessDialog(null);
+  };
+
+  const handleEditBusinessId = (app: AppKeyItem, item: AppBusinessItem) => {
+    setEditBusinessDialog({
+      appId: app.id,
+      appName: app.name,
+      businessItemId: item.id,
+      name: item.name,
+      businessId: item.businessId,
+    });
+  };
+
+  const handleConfirmEditBusinessId = () => {
+    if (!editBusinessDialog) return;
+    const app = appKeyList.find((entry) => entry.id === editBusinessDialog.appId);
+    if (!app) {
+      setEditBusinessDialog(null);
+      return;
+    }
+    const name = editBusinessDialog.name.trim();
+    if (!name) return;
+    patchAppKey(app.id, {
+      businessItems: app.businessItems.map((entry) =>
+        entry.id === editBusinessDialog.businessItemId ? { ...entry, name, updatedAt: formatDateTime() } : entry
+      ),
+      updatedAt: formatDateTime(),
+    });
+    setEditBusinessDialog(null);
+  };
+
+  const handleDeleteBusinessId = (app: AppKeyItem, item: AppBusinessItem) => {
+    openDeleteDialog("删除业务标识", `确认删除业务标识“${item.name}”吗？删除后将从当前应用中移除。`, () => {
+      patchAppKey(app.id, {
+        businessItems: app.businessItems.filter((entry) => entry.id !== item.id),
+        updatedAt: formatDateTime(),
+      });
+    });
+  };
+
+  const handleToggleAppFeature = (app: AppKeyItem, featureKey: FeatureConfigTabKey) => {
+    patchAppKey(app.id, {
+      serviceStatus: {
+        ...app.serviceStatus,
+        [featureKey]: !app.serviceStatus[featureKey],
       },
-      ...prev,
-    ]);
+      updatedAt: formatDateTime(),
+    });
   };
 
-  const handleEditBusinessId = (item: BusinessIdItem) => {
-    const scene = window.prompt("请输入业务场景", item.scene)?.trim();
-    if (!scene) return;
-    setBusinessIdList((prev) =>
-      prev.map((entry) => (entry.id === item.id ? { ...entry, scene } : entry))
-    );
+  const handleGenerateTempToken = (app: AppKeyItem) => {
+    const secret =
+      app.activeKeySlot === "secondary" && app.secondaryAppKeyEnabled
+        ? app.secondaryAppKey ?? app.primaryAppKey
+        : app.primaryAppKey;
+    const token = `temp_${app.appId}_${btoa(`${secret}:${Date.now()}`).replace(/=/g, "").slice(0, 24)}`;
+    window.prompt(`已为应用“${app.name}”生成临时 Token，可直接复制`, token);
   };
 
-  const handleDeleteBusinessId = (item: BusinessIdItem) => {
-    if (!window.confirm(`确认删除业务标识“${item.name}”吗？`)) return;
-    setBusinessIdList((prev) => prev.filter((entry) => entry.id !== item.id));
+  const handleValidateTempToken = (app: AppKeyItem) => {
+    const token = window.prompt(`请输入应用“${app.name}”的临时 Token`)?.trim();
+    if (!token) return;
+    const isValid = token.startsWith(`temp_${app.appId}_`);
+    window.alert(isValid ? "Token 校验通过" : "Token 校验失败，请检查 AppID 或 Token 内容");
   };
 
   const handleCreateResourcePackage = () => {
@@ -1668,8 +1982,9 @@ ${draft.configJson}
   };
 
   const handleDeleteResource = (item: ThirdPartyResourceItem) => {
-    if (!window.confirm(`确认删除资源“${item.name}”吗？`)) return;
-    deleteResource(item.id);
+    openDeleteDialog("删除资源", `确认删除资源“${item.name}”吗？删除后将从当前列表中移除。`, () => {
+      deleteResource(item.id);
+    });
   };
 
   const handleSaveResource = () => {
@@ -1746,8 +2061,9 @@ ${draft.configJson}
   };
 
   const handleDeleteLicense = (item: LicenseItem) => {
-    if (!window.confirm(`确认删除 License“${item.name}”吗？`)) return;
-    setLicenseList((prev) => prev.filter((entry) => entry.id !== item.id));
+    openDeleteDialog("删除 License", `确认删除 License“${item.name}”吗？删除后将从当前列表中移除。`, () => {
+      setLicenseList((prev) => prev.filter((entry) => entry.id !== item.id));
+    });
   };
 
   const surfaceClass = isDark
@@ -1756,6 +2072,15 @@ ${draft.configJson}
   const subduedTextClass = isDark ? "text-zinc-400" : "text-zinc-500";
   const strongTextClass = isDark ? "text-zinc-100" : "text-zinc-900";
   const primaryButtonClass = `inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-medium text-white shadow-sm transition-all duration-200 hover:bg-blue-500 active:scale-[0.98]`;
+  const subtleActionButtonClass = `inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
+    isDark ? "text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100" : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+  }`;
+  const subtleIconButtonClass = `inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs transition-colors ${
+    isDark ? "text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100" : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+  }`;
+  const dangerActionButtonClass = `inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
+    isDark ? "text-red-300 hover:bg-red-500/10" : "text-red-500 hover:bg-red-50"
+  }`;
   const dialogFieldBaseClass = `w-full rounded-xl border px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 ${
     isDark ? "border-zinc-700 bg-zinc-950 text-zinc-200" : "border-zinc-200 bg-white text-zinc-900"
   }`;
@@ -2423,8 +2748,223 @@ ${draft.configJson}
       </div>
     ) : null;
 
-  const renderDeleteAgentDialog = () =>
-    pendingDeleteAgent ? (
+  const renderCreateAppDialog = () =>
+    createAppDialog.open ? (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
+        <div className={`w-full max-w-lg rounded-2xl border p-6 shadow-2xl ${surfaceClass}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className={`text-lg font-semibold ${strongTextClass}`}>创建应用</div>
+              <div className={`mt-2 text-xs ${subduedTextClass}`}>输入应用名称后保存，系统会自动生成 AppID 与主 AppKey。</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCreateAppDialog({ open: false, name: "" })}
+              className={`rounded-md p-1.5 ${isDark ? "hover:bg-zinc-800" : "hover:bg-zinc-100"}`}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-6 space-y-4">
+            <label className="block">
+              <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>应用名称</div>
+              <input
+                value={createAppDialog.name}
+                onChange={(event) => setCreateAppDialog((current) => ({ ...current, name: event.target.value }))}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleConfirmCreateAppKey();
+                  }
+                }}
+                className={dialogInputClass}
+                placeholder="输入应用名称"
+              />
+            </label>
+          </div>
+          <div className="mt-6 flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setCreateAppDialog({ open: false, name: "" })}
+              className={`rounded-xl px-4 py-2 text-sm ${isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"}`}
+            >
+              取消
+            </button>
+            <button type="button" onClick={handleConfirmCreateAppKey} className={primaryButtonClass}>确认保存</button>
+          </div>
+        </div>
+      </div>
+    ) : null;
+
+  const renderCreateBusinessDialog = () =>
+    createBusinessDialog ? (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
+        <div className={`w-full max-w-lg rounded-2xl border p-6 shadow-2xl ${surfaceClass}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className={`text-lg font-semibold ${strongTextClass}`}>新增业务标识</div>
+              <div className={`mt-2 text-xs ${subduedTextClass}`}>为应用“{createBusinessDialog.appName}”填写业务标识名称和 BusinessID。</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCreateBusinessDialog(null)}
+              className={`rounded-md p-1.5 ${isDark ? "hover:bg-zinc-800" : "hover:bg-zinc-100"}`}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-6 space-y-4">
+            <label className="block">
+              <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>业务标识名称</div>
+              <input
+                value={createBusinessDialog.name}
+                onChange={(event) =>
+                  setCreateBusinessDialog((current) => (current ? { ...current, name: event.target.value } : current))
+                }
+                className={dialogInputClass}
+                placeholder="输入业务标识名称"
+              />
+            </label>
+            <label className="block">
+              <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>BusinessID</div>
+              <input
+                value={createBusinessDialog.businessId}
+                onChange={(event) =>
+                  setCreateBusinessDialog((current) => (current ? { ...current, businessId: event.target.value } : current))
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleConfirmCreateBusinessId();
+                  }
+                }}
+                className={dialogInputClass}
+                placeholder="输入 BusinessID"
+              />
+            </label>
+          </div>
+          <div className="mt-6 flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setCreateBusinessDialog(null)}
+              className={`rounded-xl px-4 py-2 text-sm ${isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"}`}
+            >
+              取消
+            </button>
+            <button type="button" onClick={handleConfirmCreateBusinessId} className={primaryButtonClass}>确认保存</button>
+          </div>
+        </div>
+      </div>
+    ) : null;
+
+  const renderEditAppDialog = () =>
+    editAppDialog ? (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
+        <div className={`w-full max-w-lg rounded-2xl border p-6 shadow-2xl ${surfaceClass}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className={`text-lg font-semibold ${strongTextClass}`}>编辑应用名称</div>
+              <div className={`mt-2 text-xs ${subduedTextClass}`}>修改应用名称后保存，不会影响 AppID 和 AppKey。</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEditAppDialog(null)}
+              className={`rounded-md p-1.5 ${isDark ? "hover:bg-zinc-800" : "hover:bg-zinc-100"}`}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-6 space-y-4">
+            <label className="block">
+              <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>应用名称</div>
+              <input
+                value={editAppDialog.name}
+                onChange={(event) => setEditAppDialog((current) => (current ? { ...current, name: event.target.value } : current))}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleConfirmEditAppKey();
+                  }
+                }}
+                className={dialogInputClass}
+                placeholder="输入应用名称"
+              />
+            </label>
+          </div>
+          <div className="mt-6 flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setEditAppDialog(null)}
+              className={`rounded-xl px-4 py-2 text-sm ${isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"}`}
+            >
+              取消
+            </button>
+            <button type="button" onClick={handleConfirmEditAppKey} className={primaryButtonClass}>确认保存</button>
+          </div>
+        </div>
+      </div>
+    ) : null;
+
+  const renderEditBusinessDialog = () =>
+    editBusinessDialog ? (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
+        <div className={`w-full max-w-lg rounded-2xl border p-6 shadow-2xl ${surfaceClass}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className={`text-lg font-semibold ${strongTextClass}`}>编辑业务标识名称</div>
+              <div className={`mt-2 text-xs ${subduedTextClass}`}>修改应用“{editBusinessDialog.appName}”下的业务标识名称，BusinessID 不可编辑。</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEditBusinessDialog(null)}
+              className={`rounded-md p-1.5 ${isDark ? "hover:bg-zinc-800" : "hover:bg-zinc-100"}`}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-6 space-y-4">
+            <label className="block">
+              <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>业务标识名称</div>
+              <input
+                value={editBusinessDialog.name}
+                onChange={(event) =>
+                  setEditBusinessDialog((current) => (current ? { ...current, name: event.target.value } : current))
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleConfirmEditBusinessId();
+                  }
+                }}
+                className={dialogInputClass}
+                placeholder="输入业务标识名称"
+              />
+            </label>
+            <label className="block">
+              <div className={`mb-2 text-xs font-medium ${subduedTextClass}`}>BusinessID</div>
+              <input
+                value={editBusinessDialog.businessId}
+                readOnly
+                className={`${dialogInputClass} ${isDark ? "cursor-not-allowed bg-zinc-900 text-zinc-400" : "cursor-not-allowed bg-zinc-50 text-zinc-500"}`}
+              />
+            </label>
+          </div>
+          <div className="mt-6 flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setEditBusinessDialog(null)}
+              className={`rounded-xl px-4 py-2 text-sm ${isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"}`}
+            >
+              取消
+            </button>
+            <button type="button" onClick={handleConfirmEditBusinessId} className={primaryButtonClass}>确认保存</button>
+          </div>
+        </div>
+      </div>
+    ) : null;
+
+  const renderDeleteDialog = () =>
+    pendingDeleteDialog ? (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
         <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${surfaceClass}`}>
           <div className="flex items-start gap-4">
@@ -2434,9 +2974,9 @@ ${draft.configJson}
               <Trash2 className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className={`text-lg font-semibold ${strongTextClass}`}>删除智能体</div>
+              <div className={`text-lg font-semibold ${strongTextClass}`}>{pendingDeleteDialog.title}</div>
               <div className={`mt-2 text-sm leading-6 ${subduedTextClass}`}>
-                确认删除智能体“{pendingDeleteAgent.name}”吗？删除后将从当前列表中移除。
+                {pendingDeleteDialog.description}
               </div>
             </div>
           </div>
@@ -2444,19 +2984,19 @@ ${draft.configJson}
           <div className="mt-8 flex justify-end gap-3">
             <button
               type="button"
-              onClick={() => setPendingDeleteAgent(null)}
+              onClick={() => setPendingDeleteDialog(null)}
               className={`rounded-xl px-4 py-2 text-sm ${isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"}`}
             >
               取消
             </button>
             <button
               type="button"
-              onClick={handleConfirmDeleteAgent}
+              onClick={handleConfirmDeleteDialog}
               className={`rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
                 isDark ? "bg-red-500/10 text-red-300 hover:bg-red-500/15" : "bg-red-50 text-red-500 hover:bg-red-100"
               }`}
             >
-              确认删除
+              {pendingDeleteDialog.confirmLabel ?? "确认删除"}
             </button>
           </div>
         </div>
@@ -2491,7 +3031,7 @@ ${draft.configJson}
             }`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className={`text-sm font-semibold ${strongTextClass}`}>{agent.name}</div>
+                  <div className={`text-base font-semibold ${strongTextClass}`}>{agent.name}</div>
                   <div className={`mt-1 inline-flex items-center gap-1.5 text-xs ${subduedTextClass}`}>
                     <span>{`BotId：${agent.botId}`}</span>
                     <button
@@ -3146,165 +3686,819 @@ ${draft.configJson}
     </div>
   );
 
-  const renderAppKeys = () => (
-    <div className="space-y-4">
-      {appKeyList.map((item) => (
-        <div key={item.id} className={`rounded-2xl border p-5 shadow-sm ${surfaceClass}`}>
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className={`text-base font-semibold ${strongTextClass}`}>{item.name}</div>
-              <div className={`mt-2 text-xs ${subduedTextClass}`}>AppID：{item.appId}</div>
-              <div className={`mt-2 text-xs ${subduedTextClass}`}>最近更新：{item.updatedAt}</div>
-            </div>
-            <span className={`rounded-full px-3 py-1 text-xs ${item.status === "已启用" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300" : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"}`}>{item.status}</span>
-          </div>
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button type="button" onClick={() => handleEditAppKey(item)} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-xs ${isDark ? "border-zinc-700 text-zinc-200 hover:bg-zinc-800" : "border-zinc-200 text-zinc-700 hover:bg-zinc-50"}`}><Pencil className="h-4 w-4" />编辑</button>
-            <button type="button" onClick={() => window.alert(`秘钥详情\n\n名称：${item.name}\nAppID：${item.appId}`)} className={`rounded-lg border px-4 py-2 text-xs ${isDark ? "border-zinc-700 text-zinc-200 hover:bg-zinc-800" : "border-zinc-200 text-zinc-700 hover:bg-zinc-50"}`}>查看</button>
-            <button type="button" onClick={() => handleDeleteAppKey(item)} className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-xs text-red-500 hover:bg-red-50 dark:border-red-500/20 dark:text-red-300 dark:hover:bg-red-500/10"><Trash2 className="h-4 w-4" />删除</button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-
-  const renderBusinessIds = () => (
-    <div className="space-y-4">
-      {businessIdList.map((item) => (
-        <div key={item.id} className={`rounded-2xl border p-5 shadow-sm ${surfaceClass}`}>
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className={`text-base font-semibold ${strongTextClass}`}>{item.name}</div>
-              <div className={`mt-2 text-xs ${subduedTextClass}`}>BusinessId：{item.businessId}</div>
-              <div className={`mt-2 text-xs ${subduedTextClass}`}>业务场景：{item.scene}</div>
-            </div>
-            <span className={`rounded-full px-3 py-1 text-xs ${item.status === "已启用" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300" : "bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300"}`}>{item.status}</span>
-          </div>
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button type="button" onClick={() => handleEditBusinessId(item)} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-xs ${isDark ? "border-zinc-700 text-zinc-200 hover:bg-zinc-800" : "border-zinc-200 text-zinc-700 hover:bg-zinc-50"}`}><Pencil className="h-4 w-4" />编辑</button>
-            <button type="button" onClick={() => window.alert(`业务标识详情\n\n名称：${item.name}\nBusinessId：${item.businessId}\n场景：${item.scene}`)} className={`rounded-lg border px-4 py-2 text-xs ${isDark ? "border-zinc-700 text-zinc-200 hover:bg-zinc-800" : "border-zinc-200 text-zinc-700 hover:bg-zinc-50"}`}>查看</button>
-            <button type="button" onClick={() => handleDeleteBusinessId(item)} className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-xs text-red-500 hover:bg-red-50 dark:border-red-500/20 dark:text-red-300 dark:hover:bg-red-500/10"><Trash2 className="h-4 w-4" />删除</button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-
-  const renderFeatureConfigs = () => {
-    const featureTabs = FEATURE_CONFIG_TABS;
-    const activeFeature = featureTabs.find((tab) => tab.key === activeFeatureTab) ?? featureTabs[0];
-    const activeFeatureEnabled = featureEnabledMap[activeFeature.key];
-    const toggleActiveFeature = () => {
-      setFeatureEnabledMap((prev) => ({
-        ...prev,
-        [activeFeature.key]: !prev[activeFeature.key],
-      }));
-    };
+  const renderAppKeyDetailCard = (item: AppKeyItem) => {
+    const enabledFeatureCount = Object.values(item.serviceStatus).filter(Boolean).length;
+    const enabledFeatures = FEATURE_CONFIG_TABS.filter((tab) => item.serviceStatus[tab.key]);
+    const primarySecretKey = `${item.id}:primary`;
+    const secondarySecretKey = `${item.id}:secondary`;
+    const isPrimaryVisible = visibleAppSecrets[primarySecretKey];
+    const isSecondaryVisible = visibleAppSecrets[secondarySecretKey];
 
     return (
-      <div className="space-y-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className={`text-xs font-medium ${strongTextClass}`}>选择应用</div>
-          <div className="relative min-w-[290px]">
-            <select
-              value={selectedFeatureAppId}
-              onChange={(event) => setSelectedFeatureAppId(event.target.value)}
-              className={`h-10 w-full px-3 pr-9 outline-none ${pageSelectBaseClass}`}
-            >
-              <option value="小龙虾(69dc5e0f1fc5bf017632e7b4)">小龙虾(69dc5e0f1fc5bf017632e7b4)</option>
-              <option value="直播互动助手(app_10001)">直播互动助手(app_10001)</option>
-              <option value="智能客服坐席(app_10002)">智能客服坐席(app_10002)</option>
-            </select>
-            <span className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs ${subduedTextClass}`}>▼</span>
-          </div>
-        </div>
-
-        <div className={`flex flex-wrap gap-2 border-b pb-3 ${isDark ? "border-zinc-800" : "border-zinc-200"}`}>
-          {featureTabs.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveFeatureTab(tab.key)}
-              className={`rounded-lg border px-3 py-2 text-xs transition-colors ${pageFilterButtonFocusClass} ${
-                activeFeatureTab === tab.key
-                  ? isDark
-                    ? "border-blue-500/60 bg-blue-500/10 text-blue-300"
-                    : "border-blue-500 bg-blue-50 text-blue-600"
-                  : isDark
-                    ? "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200"
-                    : "border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="space-y-5">
-          <div className={`rounded-xl border p-5 ${surfaceClass}`}>
-            <div className={`text-sm font-semibold ${strongTextClass}`}>配置说明</div>
-            <div className={`mt-4 space-y-2 text-xs leading-7 ${subduedTextClass}`}>
-              {activeFeature.notes.map((note, index) => (
-                <div key={note}>
-                  {index + 1}、{note}
-                </div>
-              ))}
+      <div className="space-y-4">
+        <div className="group flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-3">
+            <div className="-my-1 inline-flex min-h-[36px] items-center gap-2 rounded-lg py-1">
+              <div className={`text-base font-semibold ${strongTextClass}`}>{item.name}</div>
+              <button
+                type="button"
+                onClick={() => handleEditAppKey(item)}
+                className={`${subtleIconButtonClass} min-h-[24px] min-w-[24px] p-1 pointer-events-none translate-y-0.5 opacity-0 transition-all duration-200 ease-out group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:translate-y-0 focus-visible:opacity-100`}
+                title="编辑应用名称"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
             </div>
-          </div>
-
-          <div className={`rounded-xl border px-4 py-3 ${surfaceClass}`}>
-            <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <div className={`flex items-center gap-2 text-sm font-medium ${strongTextClass}`}>
-                  <span>{activeFeature.label}</span>
-                  <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full border text-[10px] ${isDark ? "border-zinc-700 text-zinc-500" : "border-zinc-300 text-zinc-400"}`}>i</span>
-                </div>
-                <div className={`mt-1 text-xs ${subduedTextClass}`}>
-                  {activeFeature.description}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <span
-                  className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
-                    activeFeatureEnabled
-                      ? isDark
-                        ? "bg-blue-500/15 text-blue-300"
-                        : "bg-blue-50 text-blue-600"
-                      : isDark
-                        ? "bg-zinc-800 text-zinc-400"
-                        : "bg-zinc-100 text-zinc-500"
-                  }`}
-                >
-                  {activeFeatureEnabled ? "已开启" : "未开启"}
-                </span>
+            <div className="grid gap-2 text-xs md:grid-cols-1">
+              <div className={`inline-flex items-center gap-1.5 ${subduedTextClass}`}>
+                <span>{`AppID：${item.appId}`}</span>
                 <button
                   type="button"
-                  role="switch"
-                  aria-checked={activeFeatureEnabled}
-                  aria-label={activeFeatureEnabled ? `关闭${activeFeature.label}` : `开启${activeFeature.label}`}
-                  onClick={toggleActiveFeature}
-                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 ${
-                    activeFeatureEnabled
-                      ? isDark
-                        ? "border-blue-400/40 bg-blue-500 shadow-[0_0_0_4px_rgba(59,130,246,0.12)]"
-                        : "border-blue-500/40 bg-blue-500 shadow-[0_0_0_4px_rgba(59,130,246,0.12)]"
-                      : isDark
-                        ? "border-zinc-700 bg-zinc-800"
-                        : "border-zinc-300 bg-zinc-200"
-                  } ${isDark ? "focus-visible:ring-offset-zinc-950" : "focus-visible:ring-offset-white"}`}
-                  title={activeFeatureEnabled ? `关闭${activeFeature.label}` : `开启${activeFeature.label}`}
+                  onClick={() => void handleCopyAppId(item.id, item.appId)}
+                  className={`inline-flex h-5 w-5 items-center justify-center rounded transition-colors ${
+                    isDark
+                      ? "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                      : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                  }`}
+                  title={copiedAppId === item.id ? "已复制" : "复制 AppID"}
+                  aria-label={copiedAppId === item.id ? "已复制" : "复制 AppID"}
                 >
-                  <span
-                    className={`absolute left-0.5 top-0.5 h-[18px] w-[18px] rounded-full bg-white shadow-sm transition-transform duration-200 ease-out ${
-                      activeFeatureEnabled ? "translate-x-5" : "translate-x-0"
-                    }`}
-                  />
+                  {copiedAppId === item.id ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
                 </button>
               </div>
             </div>
           </div>
+
+          <div className="relative flex items-start gap-2" data-app-action-menu-root="true">
+            <span
+              className={`rounded-full px-3 py-1 text-xs ${
+                item.status === "已启用"
+                  ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300"
+                  : item.status === "已禁用"
+                    ? "bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300"
+                    : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+              }`}
+            >
+              {item.status}
+            </span>
+            <button
+              type="button"
+              onClick={() => setAppActionMenuId((current) => (current === item.id ? null : item.id))}
+              className={subtleIconButtonClass}
+              aria-label={`更多操作：${item.name}`}
+            >
+              <EllipsisVertical className="h-4 w-4" />
+            </button>
+            {appActionMenuId === item.id ? (
+              <div
+                className={`absolute right-0 top-9 z-10 min-w-[116px] rounded-xl border p-1.5 shadow-lg ${
+                  isDark ? "border-zinc-800 bg-zinc-900" : "border-zinc-200 bg-white"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => handleToggleAppStatus(item)}
+                  className={`flex w-full items-center rounded-lg px-3 py-2 text-left text-xs ${
+                    isDark ? "text-zinc-200 hover:bg-zinc-800" : "text-zinc-700 hover:bg-zinc-50"
+                  }`}
+                >
+                  {item.status === "已禁用" ? "启用" : "禁用"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteAppKey(item)}
+                  className={`flex w-full items-center rounded-lg px-3 py-2 text-left text-xs ${
+                    isDark ? "text-red-300 hover:bg-red-500/10" : "text-red-500 hover:bg-red-50"
+                  }`}
+                >
+                  删除
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
+
+        <div className="mt-5 space-y-4">
+          <div className={`rounded-xl border p-3 ${isDark ? "border-zinc-800 bg-zinc-950/70" : "border-zinc-200 bg-zinc-50/80"}`}>
+            <div className="flex items-center justify-between gap-3">
+              <div className={`text-sm font-semibold ${strongTextClass}`}>AppKey 管理</div>
+              <div className="flex flex-wrap items-center gap-1">
+                {!item.secondaryAppKey ? (
+                  <button
+                    type="button"
+                    onClick={() => handleAddSecondaryAppKey(item)}
+                    className={subtleActionButtonClass}
+                  >
+                    <Plus className="h-4 w-4" />
+                    启用副 AppKey
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            <div className={`mt-3 ${isDark ? "border-zinc-800" : "border-zinc-200"}`}>
+              <div className="grid gap-2 py-2 md:grid-cols-[1fr,60px,1fr] md:items-center">
+                <div
+                  className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${
+                    isDark ? "border-zinc-800 bg-zinc-900" : "border-zinc-200 bg-white"
+                  }`}
+                >
+                  <div className={`w-14 shrink-0 whitespace-nowrap text-xs font-medium ${isDark ? "text-zinc-100" : "text-zinc-900"}`}>主AppKey</div>
+                  <div className={`min-w-0 flex-1 break-all font-mono text-xs ${subduedTextClass}`}>
+                    {isPrimaryVisible ? item.primaryAppKey : maskAppSecret(item.primaryAppKey)}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => toggleAppSecretVisibility(primarySecretKey)}
+                      className={subtleIconButtonClass}
+                      title={isPrimaryVisible ? "隐藏明文" : "显示明文"}
+                    >
+                      {isPrimaryVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!item.primaryAppKey}
+                      onClick={() => void handleCopyAppSecret(item, "primary", item.primaryAppKey)}
+                      className={`inline-flex items-center rounded-lg px-2 py-1.5 transition-colors ${
+                        item.primaryAppKey ? subtleIconButtonClass : "cursor-not-allowed text-zinc-400 dark:text-zinc-600"
+                      }`}
+                      title="复制 AppKey"
+                    >
+                      {copiedAppSecretKey === primarySecretKey ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center">
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchActiveAppKey(item)}
+                    disabled={!item.secondaryAppKey || !item.secondaryAppKeyEnabled}
+                    className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${
+                      item.secondaryAppKey && item.secondaryAppKeyEnabled
+                        ? isDark
+                          ? "border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
+                          : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                        : isDark
+                          ? "cursor-not-allowed border-zinc-800 bg-zinc-900 text-zinc-600"
+                          : "cursor-not-allowed border-zinc-200 bg-zinc-50 text-zinc-300"
+                    }`}
+                    title={item.secondaryAppKey ? (item.secondaryAppKeyEnabled ? "切换主副 AppKey" : "请先启用副 AppKey") : "当前没有副 AppKey"}
+                  >
+                    <ArrowLeftRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                <div
+                  className={`group flex items-center gap-3 rounded-lg border px-3 py-2 ${
+                    isDark ? "border-zinc-800 bg-zinc-900" : "border-zinc-200 bg-white"
+                  } ${!item.secondaryAppKey ? "opacity-70" : ""}`}
+                >
+                  <div className={`w-14 shrink-0 whitespace-nowrap text-xs font-medium ${isDark ? "text-zinc-100" : "text-zinc-900"}`}>副AppKey</div>
+                  <div className={`min-w-0 flex-1 break-all font-mono text-xs ${subduedTextClass}`}>
+                    {item.secondaryAppKey
+                      ? isSecondaryVisible
+                        ? item.secondaryAppKey
+                        : maskAppSecret(item.secondaryAppKey)
+                      : "-"}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {item.secondaryAppKey ? (
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={item.secondaryAppKeyEnabled}
+                        aria-label={item.secondaryAppKeyEnabled ? "停用副 AppKey" : "启用副 AppKey"}
+                        onClick={() => handleToggleSecondaryAppKey(item)}
+                        className={`relative mr-1 inline-flex h-[14px] w-[26px] shrink-0 items-center rounded-full border transition-all duration-200 ease-out ${
+                          item.secondaryAppKeyEnabled
+                            ? isDark
+                              ? "border-blue-400/20 bg-blue-500/80"
+                              : "border-blue-500/20 bg-blue-500/80"
+                            : isDark
+                              ? "border-zinc-700/80 bg-zinc-800"
+                              : "border-zinc-300/80 bg-zinc-100"
+                        }`}
+                      >
+                        <span
+                          className={`absolute left-0.5 top-0.5 h-[9px] w-[9px] rounded-full bg-white/95 shadow-none transition-transform duration-200 ease-out ${
+                            item.secondaryAppKeyEnabled ? "translate-x-3" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
+                    ) : null}
+                    {item.secondaryAppKey && !item.secondaryAppKeyEnabled ? (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSecondaryAppKey(item)}
+                        className={`${dangerActionButtonClass} pointer-events-none translate-y-0.5 opacity-0 transition-all duration-200 ease-out group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:translate-y-0 focus-visible:opacity-100`}
+                        title="删除副 AppKey"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => toggleAppSecretVisibility(secondarySecretKey)}
+                      className={subtleIconButtonClass}
+                      title={isSecondaryVisible ? "隐藏明文" : "显示明文"}
+                      disabled={!item.secondaryAppKey}
+                    >
+                      {isSecondaryVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!item.secondaryAppKey}
+                      onClick={() => void handleCopyAppSecret(item, "secondary", item.secondaryAppKey)}
+                      className={`inline-flex items-center rounded-lg px-2 py-1.5 transition-colors ${
+                        item.secondaryAppKey
+                          ? subtleIconButtonClass
+                          : "cursor-not-allowed text-zinc-400 dark:text-zinc-600"
+                      }`}
+                      title="复制 AppKey"
+                    >
+                      {copiedAppSecretKey === secondarySecretKey ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className={`rounded-xl border p-4 ${isDark ? "border-zinc-800 bg-zinc-950/70" : "border-zinc-200 bg-zinc-50/80"}`}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className={`text-sm font-semibold ${strongTextClass}`}>Token 管理</div>
+                <div className={`mt-1 text-xs ${subduedTextClass}`}>支持临时 Token 生成，以及通用 Token 校验。</div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleGenerateTempToken(item)}
+                  className={`inline-flex items-center justify-center rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                    isDark
+                      ? "border-blue-400/35 bg-blue-500/10 text-blue-200 hover:border-blue-400/50 hover:bg-blue-500/15"
+                      : "border-blue-200 bg-blue-50 text-blue-600 hover:border-blue-300 hover:bg-blue-100/80"
+                  }`}
+                >
+                  生成临时 Token
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleValidateTempToken(item)}
+                  className={`inline-flex items-center justify-center rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                    isDark
+                      ? "border-blue-400/35 bg-blue-500/10 text-blue-200 hover:border-blue-400/50 hover:bg-blue-500/15"
+                      : "border-blue-200 bg-blue-50 text-blue-600 hover:border-blue-300 hover:bg-blue-100/80"
+                  }`}
+                >
+                  Token 校验
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className={`rounded-xl border p-4 ${isDark ? "border-zinc-800 bg-zinc-950/70" : "border-zinc-200 bg-zinc-50/80"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <div className={`text-sm font-semibold ${strongTextClass}`}>服务开通管理</div>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] ${isDark ? "bg-zinc-800 text-zinc-300" : "bg-zinc-100 text-zinc-600"}`}>
+                    {enabledFeatureCount}
+                  </span>
+                </div>
+              </div>
+              {enabledFeatures.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {enabledFeatures.map((feature) => (
+                    <span
+                      key={feature.key}
+                      className={`rounded-full px-2.5 py-1 text-[11px] ${
+                        isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"
+                      }`}
+                    >
+                      {feature.label}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className={`mt-3 text-xs ${subduedTextClass}`}>当前还没有已开通服务</div>
+              )}
+
+              <div className={`mt-3 divide-y ${isDark ? "divide-zinc-800" : "divide-zinc-200"}`}>
+                {FEATURE_CONFIG_TABS.map((feature) => {
+                  const featureEnabled = item.serviceStatus[feature.key];
+                  return (
+                    <div key={feature.key} className="flex items-center justify-between gap-4 py-3">
+                      <div className="min-w-0">
+                        <div className={`text-sm font-medium ${strongTextClass}`}>{feature.label}</div>
+                        <div className={`mt-1 line-clamp-1 text-xs ${subduedTextClass}`}>{feature.description}</div>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={featureEnabled}
+                        aria-label={featureEnabled ? `关闭${feature.label}` : `开启${feature.label}`}
+                        onClick={() => handleToggleAppFeature(item, feature.key)}
+                        className={`relative inline-flex h-4 w-[30px] shrink-0 items-center rounded-full border transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/20 focus-visible:ring-offset-2 ${
+                          featureEnabled
+                            ? isDark
+                              ? "border-blue-400/20 bg-blue-500/80"
+                              : "border-blue-500/20 bg-blue-500/80"
+                            : isDark
+                              ? "border-zinc-700/80 bg-zinc-800"
+                              : "border-zinc-300/80 bg-zinc-100"
+                        } ${isDark ? "focus-visible:ring-offset-zinc-950" : "focus-visible:ring-offset-white"}`}
+                      >
+                        <span
+                          className={`absolute left-0.5 top-0.5 h-[11px] w-[11px] rounded-full bg-white/95 shadow-none transition-transform duration-200 ease-out ${
+                            featureEnabled ? "translate-x-[13px]" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className={`rounded-xl border p-4 ${isDark ? "border-zinc-800 bg-zinc-950/70" : "border-zinc-200 bg-zinc-50/80"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <div className={`text-sm font-semibold ${strongTextClass}`}>业务标识管理</div>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] ${isDark ? "bg-zinc-800 text-zinc-300" : "bg-zinc-100 text-zinc-600"}`}>
+                    {item.businessItems.length}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCreateBusinessId(item)}
+                  className={subtleActionButtonClass}
+                >
+                  <Plus className="h-4 w-4" />
+                  新增业务标识
+                </button>
+              </div>
+
+              <div className="mt-3">
+                {item.businessItems.length > 0 ? (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      {item.businessItems.map((business) => (
+                        <span
+                          key={business.id}
+                          className={`rounded-full px-2.5 py-1 text-[11px] ${
+                            isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"
+                          }`}
+                        >
+                          {business.name}
+                        </span>
+                      ))}
+                    </div>
+                    <div className={`mt-3 divide-y ${isDark ? "divide-zinc-800" : "divide-zinc-200"}`}>
+                      {item.businessItems.map((business) => (
+                        <div key={business.id} className="group flex items-center justify-between gap-3 py-3">
+                          <div className="min-w-0">
+                            <div className={`truncate text-sm font-medium ${strongTextClass}`}>{business.name}</div>
+                            <div className={`mt-1 inline-flex items-center gap-1.5 text-xs ${subduedTextClass}`}>
+                              <span>{`BusinessID：${business.businessId}`}</span>
+                              <button
+                                type="button"
+                                onClick={() => void handleCopyBusinessId(business.id, business.businessId)}
+                                className={`inline-flex h-5 w-5 items-center justify-center rounded transition-colors ${
+                                  isDark
+                                    ? "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                                    : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                                }`}
+                                title={copiedBusinessId === business.id ? "已复制" : "复制 BusinessID"}
+                                aria-label={copiedBusinessId === business.id ? "已复制" : "复制 BusinessID"}
+                              >
+                                {copiedBusinessId === business.id ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleEditBusinessId(item, business)}
+                              className={`${subtleIconButtonClass} pointer-events-none translate-y-0.5 opacity-0 transition-all duration-200 ease-out group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:translate-y-0 focus-visible:opacity-100`}
+                              title="编辑业务标识"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteBusinessId(item, business)}
+                              className={`${dangerActionButtonClass} pointer-events-none translate-y-0.5 opacity-0 transition-all duration-200 ease-out group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:translate-y-0 focus-visible:opacity-100`}
+                              title="删除业务标识"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className={`px-1 py-5 text-center text-xs ${isDark ? "text-zinc-500" : "text-zinc-500"}`}>
+                    当前应用还没有业务标识，可新增用于区分不同场景、配置和统计口径。
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-4 text-xs">
+            <div className={subduedTextClass}>创建时间：{formatDisplayDateTime(item.createdAt)}</div>
+            <div className={subduedTextClass}>最后更新时间：{formatDisplayDateTime(item.updatedAt)}</div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderAppKeys = () => {
+    const selectedAppDetail = appKeyList.find((item) => item.id === selectedAppDetailId) ?? null;
+    const selectedAppActionMenuItem =
+      floatingAppActionMenu && appActionMenuId === floatingAppActionMenu.id
+        ? appKeyList.find((item) => item.id === floatingAppActionMenu.id) ?? null
+        : null;
+    const normalizedSearchQuery = appSearchQuery.trim().toLowerCase();
+    const filteredAppKeyList = appKeyList.filter((item) =>
+      !normalizedSearchQuery
+        ? true
+        : `${item.name} ${item.appId}`.toLowerCase().includes(normalizedSearchQuery)
+    );
+
+    return (
+      <div className="space-y-4">
+        <div className="flex justify-end">
+          <label className={`flex w-full max-w-sm items-center gap-2 rounded-xl border px-3 py-2 ${isDark ? "border-zinc-800 bg-zinc-950" : "border-zinc-200 bg-white"}`}>
+            <Search className={`h-4 w-4 shrink-0 ${subduedTextClass}`} />
+            <input
+              value={appSearchQuery}
+              onChange={(event) => setAppSearchQuery(event.target.value)}
+              placeholder="搜索应用名称或 AppID"
+              className={`w-full bg-transparent text-sm outline-none ${
+                isDark ? "placeholder:text-zinc-500" : "placeholder:text-zinc-400"
+              } ${strongTextClass}`}
+            />
+          </label>
+        </div>
+
+        {appKeyList.length > 0 ? (
+          <div className={`rounded-2xl border ${surfaceClass}`}>
+            <div className="overflow-x-auto rounded-2xl">
+              <table className="w-full table-fixed">
+                <colgroup>
+                  <col style={{ width: "16%" }} />
+                  <col style={{ width: "13%" }} />
+                  <col style={{ width: "15%" }} />
+                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "14%" }} />
+                  <col style={{ width: "16%" }} />
+                  <col style={{ width: "16%" }} />
+                  <col style={{ width: "100px" }} />
+                </colgroup>
+                <thead className={isDark ? "bg-zinc-950/80" : "bg-zinc-50"}>
+                  <tr className={`text-left text-xs ${subduedTextClass}`}>
+                    <th
+                      className={`sticky left-0 z-10 px-4 py-3 font-medium ${
+                        isDark ? "bg-zinc-950/80" : "bg-zinc-50"
+                      }`}
+                    >
+                      应用名称
+                    </th>
+                    <th className="px-4 py-3 font-medium">AppID</th>
+                    <th className="px-4 py-3 font-medium">主AppKey</th>
+                    <th className="px-4 py-3 font-medium">状态</th>
+                    <th className="px-4 py-3 font-medium">服务开通</th>
+                    <th className="px-4 py-3 font-medium">业务标识</th>
+                    <th className="px-4 py-3 font-medium">创建时间</th>
+                    <th
+                      className={`sticky right-0 z-10 w-[100px] px-3 py-3 text-center font-medium ${
+                        isDark ? "bg-zinc-950/80" : "bg-zinc-50"
+                      }`}
+                    >
+                      操作
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredAppKeyList.map((item) => {
+                    const enabledFeatures = FEATURE_CONFIG_TABS.filter((tab) => item.serviceStatus[tab.key]);
+                    const primarySecretKey = `${item.id}:primary`;
+                    const isPrimaryVisible = visibleAppSecrets[primarySecretKey];
+
+                    return (
+                      <tr
+                        key={item.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          setAppActionMenuId(null);
+                          setSelectedAppDetailId(item.id);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setAppActionMenuId(null);
+                            setSelectedAppDetailId(item.id);
+                          }
+                        }}
+                        className={`group cursor-pointer border-t text-sm transition-colors ${
+                          isDark
+                            ? "border-zinc-800 hover:bg-zinc-900/70"
+                            : "border-zinc-200 hover:bg-zinc-50"
+                        }`}
+                      >
+                        <td
+                          className={`sticky left-0 z-[1] px-4 py-3 ${
+                            isDark ? "bg-zinc-950 group-hover:bg-zinc-900/70" : "bg-white group-hover:bg-zinc-50"
+                          }`}
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            <div className={`min-w-0 truncate text-xs ${strongTextClass}`}>{item.name}</div>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleEditAppKey(item);
+                              }}
+                              className={`${subtleIconButtonClass} min-h-[24px] min-w-[24px] p-1 pointer-events-none translate-y-0.5 opacity-0 transition-all duration-200 ease-out group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:translate-y-0 focus-visible:opacity-100`}
+                              title="编辑应用名称"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className={`inline-flex max-w-full items-center gap-1.5 text-xs ${subduedTextClass}`}>
+                            <span className="truncate">{item.appId}</span>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleCopyAppId(item.id, item.appId);
+                              }}
+                              className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors ${
+                                isDark
+                                  ? "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                                  : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                              }`}
+                              title={copiedAppId === item.id ? "已复制" : "复制 AppID"}
+                              aria-label={copiedAppId === item.id ? "已复制" : "复制 AppID"}
+                            >
+                              {copiedAppId === item.id ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className={`inline-flex max-w-full items-center gap-1.5 text-xs font-mono ${subduedTextClass}`}>
+                            <span className="truncate">{isPrimaryVisible ? item.primaryAppKey : maskAppSecret(item.primaryAppKey)}</span>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleAppSecretVisibility(primarySecretKey);
+                              }}
+                              disabled={!item.primaryAppKey}
+                              className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors ${
+                                item.primaryAppKey
+                                  ? isDark
+                                    ? "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                                    : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                                  : "cursor-not-allowed text-zinc-400 dark:text-zinc-600"
+                              }`}
+                              title={isPrimaryVisible ? "隐藏明文" : "显示明文"}
+                              aria-label={isPrimaryVisible ? "隐藏明文" : "显示明文"}
+                            >
+                              {isPrimaryVisible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleCopyAppSecret(item, "primary", item.primaryAppKey);
+                              }}
+                              disabled={!item.primaryAppKey}
+                              className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors ${
+                                item.primaryAppKey
+                                  ? isDark
+                                    ? "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                                    : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                                  : "cursor-not-allowed text-zinc-400 dark:text-zinc-600"
+                              }`}
+                              title={copiedAppSecretKey === primarySecretKey ? "已复制" : "复制主 AppKey"}
+                              aria-label={copiedAppSecretKey === primarySecretKey ? "已复制" : "复制主 AppKey"}
+                            >
+                              {copiedAppSecretKey === primarySecretKey ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-1 text-xs ${
+                              item.status === "已启用"
+                                ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300"
+                                : item.status === "已禁用"
+                                  ? "bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300"
+                                  : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                            }`}
+                          >
+                            {item.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          {enabledFeatures.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {enabledFeatures.slice(0, 3).map((feature) => (
+                                <span
+                                  key={feature.key}
+                                  className={`rounded-full px-2.5 py-1 text-[11px] ${
+                                    isDark ? "bg-zinc-800 text-zinc-300" : "bg-zinc-100 text-zinc-600"
+                                  }`}
+                                >
+                                  {feature.label}
+                                </span>
+                              ))}
+                              {enabledFeatures.length > 3 ? (
+                                <span className={`rounded-full px-2.5 py-1 text-[11px] ${subduedTextClass}`}>
+                                  +{enabledFeatures.length - 3}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className={`text-xs ${subduedTextClass}`}>-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {item.businessItems.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {item.businessItems.slice(0, 3).map((business) => (
+                                <span
+                                  key={business.id}
+                                  className={`rounded-full px-2.5 py-1 text-[11px] ${
+                                    isDark ? "bg-zinc-800 text-zinc-300" : "bg-zinc-100 text-zinc-600"
+                                  }`}
+                                >
+                                  {business.name}
+                                </span>
+                              ))}
+                              {item.businessItems.length > 3 ? (
+                                <span className={`rounded-full px-2.5 py-1 text-[11px] ${subduedTextClass}`}>
+                                  +{item.businessItems.length - 3}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className={`text-xs ${subduedTextClass}`}>-</span>
+                          )}
+                        </td>
+                        <td className={`px-4 py-3 text-xs ${subduedTextClass}`}>{formatDisplayDateTime(item.createdAt)}</td>
+                        <td
+                          className={`sticky right-0 z-[1] px-3 pr-2 py-3 ${
+                            isDark ? "bg-zinc-950 group-hover:bg-zinc-900/70" : "bg-white group-hover:bg-zinc-50"
+                          }`}
+                        >
+                          <div className="relative flex justify-center" data-app-action-menu-root="true">
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (appActionMenuId === item.id) {
+                                  setAppActionMenuId(null);
+                                  setFloatingAppActionMenu(null);
+                                  return;
+                                }
+                                const rect = event.currentTarget.getBoundingClientRect();
+                                setAppActionMenuId(item.id);
+                                setFloatingAppActionMenu({
+                                  id: item.id,
+                                  top: rect.bottom + 6,
+                                  left: rect.right,
+                                });
+                              }}
+                              className={subtleIconButtonClass}
+                              aria-label={`操作：${item.name}`}
+                            >
+                              <EllipsisVertical className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
+
+        {appKeyList.length > 0 && filteredAppKeyList.length === 0 ? (
+          <div className={`rounded-2xl border px-6 py-12 text-center text-sm ${surfaceClass} ${subduedTextClass}`}>
+            没有找到匹配的应用，请尝试按应用名称或 AppID 搜索。
+          </div>
+        ) : (
+          appKeyList.length === 0 ? (
+            <div className={`rounded-2xl border px-6 py-12 text-center text-sm ${surfaceClass} ${subduedTextClass}`}>
+              当前还没有应用，点击右上角“创建应用”开始接入。
+            </div>
+          ) : null
+        )}
+
+        {selectedAppActionMenuItem && floatingAppActionMenu
+          ? createPortal(
+              <div
+                data-app-action-menu-root="true"
+                className={`fixed z-[70] w-max min-w-0 -translate-x-full rounded-lg border p-0.5 shadow-lg ${
+                  isDark ? "border-zinc-800 bg-zinc-900" : "border-zinc-200 bg-white"
+                }`}
+                style={{
+                  top: floatingAppActionMenu.top,
+                  left: floatingAppActionMenu.left,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleGenerateTempToken(selectedAppActionMenuItem);
+                    setAppActionMenuId(null);
+                  }}
+                  className={`flex w-full items-center whitespace-nowrap rounded-md px-2 py-1 text-left text-[11px] leading-4 ${
+                    isDark ? "text-zinc-200 hover:bg-zinc-800" : "text-zinc-700 hover:bg-zinc-50"
+                  }`}
+                >
+                  生成临时 Token
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleValidateTempToken(selectedAppActionMenuItem);
+                    setAppActionMenuId(null);
+                  }}
+                  className={`flex w-full items-center whitespace-nowrap rounded-md px-2 py-1 text-left text-[11px] leading-4 ${
+                    isDark ? "text-zinc-200 hover:bg-zinc-800" : "text-zinc-700 hover:bg-zinc-50"
+                  }`}
+                >
+                  Token 校验
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleToggleAppStatus(selectedAppActionMenuItem);
+                  }}
+                  className={`flex w-full items-center whitespace-nowrap rounded-md px-2 py-1 text-left text-[11px] leading-4 ${
+                    isDark ? "text-zinc-200 hover:bg-zinc-800" : "text-zinc-700 hover:bg-zinc-50"
+                  }`}
+                >
+                  {selectedAppActionMenuItem.status === "已禁用" ? "启用" : "禁用"}
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleDeleteAppKey(selectedAppActionMenuItem);
+                  }}
+                  className={`flex w-full items-center whitespace-nowrap rounded-md px-2 py-1 text-left text-[11px] leading-4 ${
+                    isDark ? "text-red-300 hover:bg-red-500/10" : "text-red-500 hover:bg-red-50"
+                  }`}
+                >
+                  删除
+                </button>
+              </div>,
+              document.body
+            )
+          : null}
+
+        {selectedAppDetail ? (
+          <div className="fixed inset-x-0 bottom-0 -top-6 z-50">
+            <button
+              type="button"
+              className="absolute inset-0 bg-black/35"
+              onClick={() => {
+                setSelectedAppDetailId(null);
+                setAppActionMenuId(null);
+              }}
+              aria-label="关闭应用详情"
+            />
+            <div
+              className={`absolute inset-y-0 right-0 w-full max-w-[920px] border-l shadow-2xl ${
+                isDark ? "border-zinc-800 bg-zinc-950" : "border-zinc-200 bg-white"
+              }`}
+            >
+              <div className="flex h-full flex-col">
+                <div className="flex-1 overflow-y-auto p-6 pt-4">
+                  {renderAppKeyDetailCard(selectedAppDetail)}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   };
@@ -3832,31 +5026,31 @@ ${draft.configJson}
       return <Workspace onOpenAssistant={() => ensureCatalogAssistantOpen("agent")} />;
     }
 
-    const currentCopy = sectionCopy[currentSection];
-    const isCatalogSection = currentSection === "agents" || currentSection === "tools" || currentSection === "skills";
+    const normalizedSection =
+      currentSection === "feature-config" || currentSection === "business-ids" ? "app-keys" : currentSection;
+    const currentCopy = sectionCopy[normalizedSection];
+    const isCatalogSection = normalizedSection === "agents" || normalizedSection === "tools" || normalizedSection === "skills";
     const sectionBody = (
       <>
-        {currentSection === "agents" && renderAgents()}
-        {currentSection === "voices" && renderVoices()}
-        {currentSection === "knowledge" && renderKnowledgeBases()}
-        {currentSection === "ai-dev-tools" && renderAiDevTools()}
-        {currentSection === "env-vars" && renderEnvVars()}
-        {currentSection === "volcengine-deploy" && renderVolcengineDeploy()}
-        {currentSection === "phone-line-deploy" && renderPhoneLineDeploy()}
-        {currentSection === "quality-analysis" && renderQualityAnalysis()}
-        {currentSection === "operations-analysis" && renderOperationsAnalysis()}
-        {currentSection === "log-analysis" && renderLogAnalysis()}
-        {currentSection === "latency-analysis" && renderLatencyAnalysis()}
-        {currentSection === "usage" && renderUsage()}
-        {currentSection === "app-keys" && renderAppKeys()}
-        {currentSection === "business-ids" && renderBusinessIds()}
-        {currentSection === "feature-config" && renderFeatureConfigs()}
-        {currentSection === "resource-packages" && renderResourcePackages()}
-        {currentSection === "license-management" && renderLicenses()}
-        {currentSection === "purchase" && renderPurchase()}
-        {currentSection === "tools" && renderTools()}
-        {currentSection === "skills" && renderSkills()}
-        {currentSection === "developer-community" && renderDeveloperCommunity()}
+        {normalizedSection === "agents" && renderAgents()}
+        {normalizedSection === "voices" && renderVoices()}
+        {normalizedSection === "knowledge" && renderKnowledgeBases()}
+        {normalizedSection === "ai-dev-tools" && renderAiDevTools()}
+        {normalizedSection === "env-vars" && renderEnvVars()}
+        {normalizedSection === "volcengine-deploy" && renderVolcengineDeploy()}
+        {normalizedSection === "phone-line-deploy" && renderPhoneLineDeploy()}
+        {normalizedSection === "quality-analysis" && renderQualityAnalysis()}
+        {normalizedSection === "operations-analysis" && renderOperationsAnalysis()}
+        {normalizedSection === "log-analysis" && renderLogAnalysis()}
+        {normalizedSection === "latency-analysis" && renderLatencyAnalysis()}
+        {normalizedSection === "usage" && renderUsage()}
+        {normalizedSection === "app-keys" && renderAppKeys()}
+        {normalizedSection === "resource-packages" && renderResourcePackages()}
+        {normalizedSection === "license-management" && renderLicenses()}
+        {normalizedSection === "purchase" && renderPurchase()}
+        {normalizedSection === "tools" && renderTools()}
+        {normalizedSection === "skills" && renderSkills()}
+        {normalizedSection === "developer-community" && renderDeveloperCommunity()}
       </>
     );
 
@@ -3870,7 +5064,7 @@ ${draft.configJson}
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              {currentSection === "usage" && (
+              {normalizedSection === "usage" && (
                 <button
                   type="button"
                   onClick={() => setCurrentSection("license-management")}
@@ -3884,7 +5078,7 @@ ${draft.configJson}
                   License统计
                 </button>
               )}
-              {currentSection !== "feature-config" && currentSection !== "license-management" && (
+              {normalizedSection !== "license-management" && (
                 <button
                   type="button"
                   onClick={() => {
@@ -3902,7 +5096,6 @@ ${draft.configJson}
                       knowledge: handleCreateKnowledgeBase,
                       usage: () => window.alert("报表导出能力待接入"),
                       "app-keys": handleCreateAppKey,
-                      "business-ids": handleCreateBusinessId,
                       "resource-packages": handleCreateResourcePackage,
                       "license-management": handleCreateLicense,
                       purchase: () => window.alert("套餐中心待接入"),
@@ -3910,7 +5103,7 @@ ${draft.configJson}
                       skills: handleCreateSkill,
                       "developer-community": () => window.alert("上传社区资源能力待接入"),
                     };
-                    actions[currentSection]?.();
+                    actions[normalizedSection]?.();
                   }}
                   className={primaryButtonClass}
                 >
@@ -4236,8 +5429,12 @@ ${draft.configJson}
         )}
       </main>
       {renderAgentCreateEntryDialog()}
-      {renderDeleteAgentDialog()}
+      {renderDeleteDialog()}
       {renderAgentNameDialog()}
+      {renderCreateAppDialog()}
+      {renderCreateBusinessDialog()}
+      {renderEditAppDialog()}
+      {renderEditBusinessDialog()}
       {renderToolFormDialog()}
       {renderSkillFormDialog()}
       {renderResourceFormDialog()}

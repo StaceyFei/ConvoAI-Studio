@@ -10,12 +10,16 @@ export default defineConfig({
     sourcemap: 'hidden',
   },
   server: {
+    host: '0.0.0.0',
     proxy: {
       '/api': {
         target: 'http://localhost:8787',
         changeOrigin: true,
       },
     },
+  },
+  preview: {
+    host: '0.0.0.0',
   },
   plugins: [
     react({
