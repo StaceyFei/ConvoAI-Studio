@@ -3969,24 +3969,26 @@ ${draft.configJson}
                   </span>
                 </div>
               </div>
-              {enabledFeatures.length > 0 ? (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {enabledFeatures.map((feature) => (
-                    <span
-                      key={feature.key}
-                      className={`rounded-full px-2.5 py-1 text-[11px] ${
-                        isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"
-                      }`}
-                    >
-                      {feature.label}
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <div className={`mt-3 text-xs ${subduedTextClass}`}>当前还没有已开通服务</div>
-              )}
+              <div className="mt-4 min-h-[28px]">
+                {enabledFeatures.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {enabledFeatures.map((feature) => (
+                      <span
+                        key={feature.key}
+                        className={`rounded-full px-2.5 py-1 text-[11px] ${
+                          isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"
+                        }`}
+                      >
+                        {feature.label}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className={`text-xs ${subduedTextClass}`}>当前还没有已开通服务</div>
+                )}
+              </div>
 
-              <div className={`mt-3 divide-y ${isDark ? "divide-zinc-800" : "divide-zinc-200"}`}>
+              <div className={`mt-4 divide-y ${isDark ? "divide-zinc-800" : "divide-zinc-200"}`}>
                 {FEATURE_CONFIG_TABS.map((feature) => {
                   const featureEnabled = item.serviceStatus[feature.key];
                   return (
@@ -4041,7 +4043,7 @@ ${draft.configJson}
                 </button>
               </div>
 
-              <div className="mt-3">
+              <div className="mt-4">
                 {item.businessItems.length > 0 ? (
                   <>
                     <div className="flex flex-wrap gap-2">
@@ -4056,7 +4058,7 @@ ${draft.configJson}
                         </span>
                       ))}
                     </div>
-                    <div className={`mt-3 divide-y ${isDark ? "divide-zinc-800" : "divide-zinc-200"}`}>
+                    <div className={`mt-4 divide-y ${isDark ? "divide-zinc-800" : "divide-zinc-200"}`}>
                       {item.businessItems.map((business) => (
                         <div key={business.id} className="group flex items-center justify-between gap-3 py-3">
                           <div className="min-w-0">
@@ -4101,7 +4103,7 @@ ${draft.configJson}
                     </div>
                   </>
                 ) : (
-                  <div className={`px-1 py-5 text-center text-xs ${isDark ? "text-zinc-500" : "text-zinc-500"}`}>
+                  <div className={`text-xs ${subduedTextClass}`}>
                     当前应用还没有业务标识，可新增用于区分不同场景、配置和统计口径。
                   </div>
                 )}
