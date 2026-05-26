@@ -1,6 +1,6 @@
 import { Phone, Mic, MicOff, Video, VideoOff, User, Share, X, MonitorSmartphone, Info, Activity, Copy, Check } from "lucide-react";
 import { useWorkspaceStore } from "../store/workspace";
-import { useState, useRef, MouseEvent, useEffect } from "react";
+import { useState, useRef, MouseEvent, useMemo } from "react";
 
 type PreviewPanelProps = {
   onOpenAssistant?: () => void;
@@ -9,7 +9,7 @@ type PreviewPanelProps = {
 export default function PreviewPanel({ onOpenAssistant }: PreviewPanelProps) {
   const { 
     isCalling, isMicOn, isVideoOn, toggleCall, toggleMic, toggleVideo, theme, callError, setChatInput, agentName,
-    previewAgent
+    previewAgent, currentCallInfo, currentJson
   } = useWorkspaceStore();
   const [position, setPosition] = useState({ x: 20, y: 20 });
   const [isDragging, setIsDragging] = useState(false);
@@ -27,22 +27,35 @@ export default function PreviewPanel({ onOpenAssistant }: PreviewPanelProps) {
     }
   };
 
-  // State for call info
-  const [callInfoData, setCallInfoData] = useState({
-    appId: "",
-    roomId: "",
-    userId: ""
-  });
-
-  useEffect(() => {
-    if (isCalling) {
-      setCallInfoData({
-        appId: "6943d3561511bb0173868a93",
-        roomId: `ConversationalAIRoom_${Date.now()}`,
-        userId: "Huoshan01"
-      });
+  const callInfoData = useMemo(() => {
+    if (currentCallInfo) {
+      return {
+        appId: currentCallInfo.appId,
+        roomId: currentCallInfo.roomId,
+        userId: currentCallInfo.userId,
+      };
     }
-  }, [isCalling]);
+
+    try {
+      const parsed = JSON.parse(currentJson);
+      const targetUserId =
+        Array.isArray(parsed?.AgentConfig?.TargetUserId) && typeof parsed.AgentConfig.TargetUserId[0] === "string"
+          ? parsed.AgentConfig.TargetUserId[0]
+          : "";
+
+      return {
+        appId: typeof parsed?.AppId === "string" ? parsed.AppId : "",
+        roomId: typeof parsed?.RoomId === "string" ? parsed.RoomId : "",
+        userId: targetUserId,
+      };
+    } catch {
+      return {
+        appId: "",
+        roomId: "",
+        userId: "",
+      };
+    }
+  }, [currentCallInfo, currentJson]);
 
   const handleCopy = (text: string, field: string) => {
     navigator.clipboard.writeText(text);
@@ -332,7 +345,7 @@ export default function PreviewPanel({ onOpenAssistant }: PreviewPanelProps) {
         
         {/* User Subtitle */}
         <div className="flex flex-col space-y-1">
-          <span className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">我 (user_12345)</span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">我 ({callInfoData.userId || "user_12345"})</span>
           <span className="text-sm text-zinc-800 dark:text-zinc-200">
             帮我配置一个房间
           </span>
@@ -350,7 +363,7 @@ export default function PreviewPanel({ onOpenAssistant }: PreviewPanelProps) {
           onMouseDown={handleMouseDown}
         >
           <div className="absolute top-2 left-2 bg-black/40 text-white text-[10px] px-1.5 py-0.5 rounded pointer-events-none backdrop-blur-sm">
-            Huoshan01
+            {callInfoData.userId || "User"}
           </div>
           <User className="w-12 h-12 text-zinc-300 dark:text-zinc-700 pointer-events-none" />
         </div>

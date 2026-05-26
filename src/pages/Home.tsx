@@ -35,7 +35,9 @@ import ChatPanel from "@/components/ChatPanel";
 import PreviewPanel from "@/components/PreviewPanel";
 import Workspace from "@/components/Workspace";
 import {
+  type AssistantTarget,
   type AgentSummary,
+  type AppKeyItem,
   type KnowledgeBaseItem,
   type SkillItem,
   type ToolItem,
@@ -77,14 +79,6 @@ type NavGroup = {
   }>;
 };
 
-type AppKeyItem = {
-  id: string;
-  appId: string;
-  name: string;
-  status: "已启用" | "草稿";
-  updatedAt: string;
-};
-
 type BusinessIdItem = {
   id: string;
   name: string;
@@ -109,7 +103,7 @@ type LicenseItem = {
 
 type AssistantDraftMessage = {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "agent";
   content: string;
 };
 
@@ -457,7 +451,7 @@ function formatDateTime() {
 function createAssistantWelcomeMessage(target: "agent" | "mcp" | "skill"): AssistantDraftMessage {
   return {
     id: createId("assistant-msg"),
-    role: "assistant",
+    role: "agent",
     content:
       target === "agent"
         ? "你好，我是辅助开发小助手。你可以直接描述想生成的智能体，例如“帮我生成一个客服回访智能体，支持问题归因、满意度判断和总结输出”。"
@@ -500,15 +494,23 @@ export default function Home() {
     addSkill,
     updateSkill,
     deleteSkill,
+    appKeyList,
+    addAppKey,
+    updateAppKey: patchAppKey,
+    deleteAppKey,
     addResource,
     updateResource,
     deleteResource,
+    currentAgentId,
+    currentJson,
+    updateJson,
+    chatMessages,
+    chatInput,
+    assistantMemory,
+    addMessage,
+    setAssistantMemory,
     setChatInput,
   } = useWorkspaceStore();
-  const [appKeyList, setAppKeyList] = useState<AppKeyItem[]>([
-    { id: "app-1", appId: "app_10001", name: "正式环境", status: "已启用", updatedAt: "2026-05-14 10:22" },
-    { id: "app-2", appId: "app_10002", name: "测试环境", status: "草稿", updatedAt: "2026-05-13 18:40" },
-  ]);
   const [businessIdList, setBusinessIdList] = useState<BusinessIdItem[]>([
     { id: "biz-1", name: "直播互动", businessId: "live_interaction", scene: "直播", status: "已启用" },
     { id: "biz-2", name: "客服回访", businessId: "customer_care", scene: "售后", status: "测试中" },
@@ -622,9 +624,7 @@ export default function Home() {
   const [isSettingsExpanded, setIsSettingsExpanded] = useState(false);
   const [catalogAssistantOpen, setCatalogAssistantOpen] = useState(false);
   const [catalogAssistantTarget, setCatalogAssistantTarget] = useState<"agent" | "mcp" | "skill">("mcp");
-  const [catalogAssistantInput, setCatalogAssistantInput] = useState("");
   const [catalogAssistantGenerating, setCatalogAssistantGenerating] = useState(false);
-  const [catalogAssistantMessages, setCatalogAssistantMessages] = useState<AssistantDraftMessage[]>([]);
   const [assistantPanelWidth, setAssistantPanelWidth] = useState(300);
   const [isAssistantResizing, setIsAssistantResizing] = useState(false);
   const [toolFormOpen, setToolFormOpen] = useState(false);
@@ -827,13 +827,184 @@ export default function Home() {
     return "agent";
   };
 
+  const normalizeAssistantText = (value: string) =>
+    value.toLowerCase().replace(/\s+/g, "").replace(/[·_.\-()（）[\]【】,，。!！?？:：]/g, "");
+
+  const isAssistantJsonRequest = (request: string) =>
+    /(json|代码块|配置|config)/i.test(request) &&
+    /(跑通|流程|基础|基本|示例|模板|demo)/i.test(request);
+
+  const recentAssistantUserRequests = chatMessages
+    .filter((message) => message.role === "user")
+    .map((message) => message.content.trim())
+    .filter(Boolean)
+    .slice(-3);
+
+  const isAssistantFollowUpRequest = (request: string) =>
+    request.trim().length <= 14 ||
+    /(这个|那个|它|继续|刚才|上一个|前面|同样|也要|也给|换成|改成|补充|详细一点|具体一点|这个skill|这个mcp|这个工具)/i.test(
+      request
+    );
+
+  const shouldReuseAssistantEntity = (request: string) =>
+    /(这个|那个|它|刚才|上一个|前面|同一个|同样的)/i.test(request) &&
+    /(加到|加上|挂到|挂上|用上|用这个|添加到|接入|绑定到|配置到)/i.test(request);
+
+  const buildAssistantContextualRequest = (request: string) => {
+    if (!isAssistantFollowUpRequest(request)) {
+      return request;
+    }
+
+    const baseRequest = assistantMemory.lastResolvedRequest || recentAssistantUserRequests[recentAssistantUserRequests.length - 1];
+    if (!baseRequest) {
+      return request;
+    }
+
+    const normalizedBase = normalizeAssistantText(baseRequest);
+    const normalizedRequest = normalizeAssistantText(request);
+    if (!normalizedRequest || normalizedBase.includes(normalizedRequest)) {
+      return baseRequest;
+    }
+
+    return `${baseRequest} ${request}`.trim();
+  };
+
+  const inferAssistantTarget = (request: string, fallback: "agent" | "mcp" | "skill") => {
+    const normalized = normalizeAssistantText(request);
+    if (
+      normalized.includes("skill") ||
+      normalized.includes("技能") ||
+      normalized.includes("能力") ||
+      normalized.includes("分类") ||
+      normalized.includes("审核")
+    ) {
+      return "skill";
+    }
+    if (
+      normalized.includes("mcp") ||
+      normalized.includes("tool") ||
+      normalized.includes("tools") ||
+      normalized.includes("工具")
+    ) {
+      return "mcp";
+    }
+    if (normalized.includes("智能体") || normalized.includes("agent")) {
+      return "agent";
+    }
+    return assistantMemory.lastEntity?.target ?? assistantMemory.lastTarget ?? fallback;
+  };
+
+  const getAssistantMatchScore = (request: string, candidate: string, extra?: string) => {
+    const normalizedRequest = normalizeAssistantText(request);
+    const normalizedCandidate = normalizeAssistantText(candidate);
+    const normalizedExtra = extra ? normalizeAssistantText(extra) : "";
+    let score = 0;
+
+    if (normalizedRequest.includes(normalizedCandidate) || normalizedCandidate.includes(normalizedRequest)) {
+      score += 8;
+    }
+
+    const requestTokens = Array.from(
+      new Set(
+        request
+          .split(/[\s、,，。!！?？:：()/\-]+/)
+          .map((token) => token.trim().toLowerCase())
+          .filter((token) => token && token.length >= 2)
+      )
+    );
+
+    for (const token of requestTokens) {
+      const normalizedToken = normalizeAssistantText(token);
+      if (!normalizedToken) continue;
+      if (normalizedCandidate.includes(normalizedToken)) score += 3;
+      if (normalizedExtra.includes(normalizedToken)) score += 1;
+    }
+
+    return score;
+  };
+
+  const findBestSkillMatch = (request: string) => {
+    const matches = skillList
+      .map((skill) => ({
+        skill,
+        score: getAssistantMatchScore(request, skill.name, `${skill.category} ${skill.model}`),
+      }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    return matches[0]?.skill ?? null;
+  };
+
+  const findBestToolMatch = (request: string) => {
+    const matches = toolList
+      .map((tool) => ({
+        tool,
+        score: getAssistantMatchScore(request, tool.name, `${tool.type} ${tool.endpoint}`),
+      }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    return matches[0]?.tool ?? null;
+  };
+
+  const rememberAssistantContext = (payload: {
+    target: AssistantTarget;
+    resolvedRequest: string;
+    action: "created_agent" | "attached_existing" | "opened_existing" | "created_draft";
+    entity: { name: string; id?: string; source: "existing" | "draft" | "created" | "attached" };
+  }) => {
+    setAssistantMemory({
+      lastTarget: payload.target,
+      lastResolvedRequest: payload.resolvedRequest,
+      lastAction: payload.action,
+      lastEntity: {
+        target: payload.target,
+        name: payload.entity.name,
+        id: payload.entity.id,
+        source: payload.entity.source,
+      },
+    });
+  };
+
+  const appendCapabilityToCurrentAgent = (key: "tools" | "skills", value: string) => {
+    if (!currentAgentId) return false;
+
+    try {
+      const parsed = JSON.parse(currentJson);
+      parsed.Config = parsed.Config || {};
+      if (key === "tools") {
+        parsed.Config.FunctionCallingConfig = parsed.Config.FunctionCallingConfig || {};
+        const currentValues = Array.isArray(parsed.Config.FunctionCallingConfig.Tools)
+          ? parsed.Config.FunctionCallingConfig.Tools
+          : [];
+        parsed.Config.FunctionCallingConfig.Tools = Array.from(new Set([...currentValues, value]));
+      } else {
+        parsed.Config.SkillConfig = parsed.Config.SkillConfig || {};
+        const currentValues = Array.isArray(parsed.Config.SkillConfig.Skills) ? parsed.Config.SkillConfig.Skills : [];
+        parsed.Config.SkillConfig.Skills = Array.from(new Set([...currentValues, value]));
+      }
+      updateJson(JSON.stringify(parsed, null, 2));
+      return true;
+    } catch (error) {
+      console.error("Failed to append capability to current agent", error);
+      return false;
+    }
+  };
+
+  const ensureCatalogAssistantHistory = (target: "agent" | "mcp" | "skill") => {
+    if (useWorkspaceStore.getState().chatMessages.length === 0) {
+      addMessage(createAssistantWelcomeMessage(target));
+    }
+  };
+
   useEffect(() => {
     const nextTarget = getAssistantTargetForSection(currentSection);
-    if (catalogAssistantOpen && catalogAssistantTarget !== nextTarget) {
+    if (catalogAssistantTarget !== nextTarget) {
       setCatalogAssistantTarget(nextTarget);
-      setCatalogAssistantInput("");
+    }
+    if (catalogAssistantOpen) {
       setCatalogAssistantGenerating(false);
-      setCatalogAssistantMessages([createAssistantWelcomeMessage(nextTarget)]);
+      ensureCatalogAssistantHistory(nextTarget);
     }
   }, [currentSection]);
 
@@ -911,13 +1082,11 @@ export default function Home() {
     if (isWorkspaceAssistant) {
       return;
     }
-    setCatalogAssistantInput("");
-    setCatalogAssistantMessages([createAssistantWelcomeMessage(type)]);
+    ensureCatalogAssistantHistory(type);
   };
 
   const closeCatalogAssistant = () => {
     setCatalogAssistantOpen(false);
-    setCatalogAssistantInput("");
     setCatalogAssistantGenerating(false);
   };
 
@@ -933,12 +1102,12 @@ export default function Home() {
       if (isWorkspaceAssistant) {
         setChatInput(presetInput);
       } else {
-        setCatalogAssistantInput(presetInput);
+        setChatInput(presetInput);
       }
     }
 
-    if (!isWorkspaceAssistant && (!catalogAssistantOpen || catalogAssistantTarget !== nextTarget)) {
-      setCatalogAssistantMessages([createAssistantWelcomeMessage(nextTarget)]);
+    if (!isWorkspaceAssistant) {
+      ensureCatalogAssistantHistory(nextTarget);
     }
   };
 
@@ -1173,14 +1342,18 @@ export default function Home() {
 
   const buildSkillDraftFromPrompt = (prompt: string): SkillFormState => {
     const lowerPrompt = prompt.toLowerCase();
-    const category = lowerPrompt.includes("审核")
+    const category = lowerPrompt.includes("满意度") || lowerPrompt.includes("调查")
+      ? "分析"
+      : lowerPrompt.includes("审核")
       ? "内容安全"
       : lowerPrompt.includes("分类") || lowerPrompt.includes("意图")
         ? "NLP"
         : lowerPrompt.includes("话术") || lowerPrompt.includes("文案")
           ? "文案"
           : "自定义";
-    const name = lowerPrompt.includes("审核")
+    const name = lowerPrompt.includes("满意度") || lowerPrompt.includes("调查")
+      ? "满意度调查 Skill"
+      : lowerPrompt.includes("审核")
       ? "内容审核 Skill"
       : lowerPrompt.includes("分类") || lowerPrompt.includes("意图")
         ? "意图分类 Skill"
@@ -1236,48 +1409,148 @@ export default function Home() {
   };
 
   const handleAssistantGenerate = () => {
-    if (!catalogAssistantInput.trim() || catalogAssistantGenerating) return;
-    const request = catalogAssistantInput.trim();
+    if (!chatInput.trim() || catalogAssistantGenerating) return;
+    const request = chatInput.trim();
+    const contextualRequest = buildAssistantContextualRequest(request);
+    const resolvedTarget = inferAssistantTarget(contextualRequest, catalogAssistantTarget);
     const userMessage: AssistantDraftMessage = { id: createId("assistant-msg"), role: "user", content: request };
-    setCatalogAssistantMessages((prev) => [...prev, userMessage]);
-    setCatalogAssistantInput("");
+    addMessage(userMessage);
+    setChatInput("");
     setCatalogAssistantGenerating(true);
 
     window.setTimeout(() => {
-      if (catalogAssistantTarget === "agent") {
-        const draft = buildAgentDraftFromPrompt(request);
-        setCatalogAssistantMessages((prev) => [
-          ...prev,
-          {
-            id: createId("assistant-msg"),
-            role: "assistant",
-            content: "我已经帮你生成了一个智能体草稿，并自动进入智能体编排页。你可以继续补充提示词、工具和知识库配置。",
-          },
-        ]);
+      if (resolvedTarget === "agent") {
+        const draft = buildAgentDraftFromPrompt(contextualRequest);
+        addMessage({
+          role: "agent",
+          content: isAssistantJsonRequest(contextualRequest)
+            ? `我给你一份可以直接参考的基础流程 JSON，同时也已经帮你生成了一个智能体草稿并进入编排页。
+
+\`\`\`json
+${draft.configJson}
+\`\`\``
+            : "我已经帮你生成了一个智能体草稿，并自动进入智能体编排页。你可以继续补充提示词、工具和知识库配置。",
+        });
         addAgent(draft);
         openAgent(draft);
-      } else if (catalogAssistantTarget === "mcp") {
-        const draft = buildToolDraftFromPrompt(request);
-        setCatalogAssistantMessages((prev) => [
-          ...prev,
-          {
-            id: createId("assistant-msg"),
-            role: "assistant",
-            content: `我已经帮你生成了一个 MCP 草稿，并自动预填到表单中。你可以继续补充名称、类型、Endpoint 和状态后保存。`,
-          },
-        ]);
-        openToolForm(draft);
+        rememberAssistantContext({
+          target: "agent",
+          resolvedRequest: contextualRequest,
+          action: "created_agent",
+          entity: { name: draft.name, id: draft.id, source: "created" },
+        });
+      } else if (resolvedTarget === "mcp") {
+        const referencedTool =
+          shouldReuseAssistantEntity(request) && assistantMemory.lastEntity?.target === "mcp"
+            ? toolList.find(
+                (tool) =>
+                  tool.id === assistantMemory.lastEntity?.id || tool.name === assistantMemory.lastEntity?.name
+              ) ?? null
+            : null;
+        const matchedTool = referencedTool ?? findBestToolMatch(contextualRequest);
+        if (matchedTool && currentSection === "orchestration" && appendCapabilityToCurrentAgent("tools", matchedTool.name)) {
+          addMessage({
+            role: "agent",
+            content: `我已经在“我的Tools”里找到了 MCP“${matchedTool.name}”，并把它直接加到当前智能体的工具配置里了。`,
+          });
+          rememberAssistantContext({
+            target: "mcp",
+            resolvedRequest: contextualRequest,
+            action: "attached_existing",
+            entity: { name: matchedTool.name, id: matchedTool.id, source: "attached" },
+          });
+        } else if (matchedTool) {
+          addMessage({
+            role: "agent",
+            content: `我已经在“我的Tools”里找到了 MCP“${matchedTool.name}”。当前不在智能体编排页，我先带你跳到“我的Tools”查看这条能力。`,
+          });
+          setCurrentSection("tools");
+          openToolForm(matchedTool);
+          rememberAssistantContext({
+            target: "mcp",
+            resolvedRequest: contextualRequest,
+            action: "opened_existing",
+            entity: { name: matchedTool.name, id: matchedTool.id, source: "existing" },
+          });
+        } else {
+          const draft = buildToolDraftFromPrompt(contextualRequest);
+          const createdTool: ToolItem = {
+            id: createId("tool"),
+            name: draft.name.trim(),
+            type: draft.type.trim(),
+            endpoint: draft.endpoint.trim(),
+            status: draft.status,
+          };
+          addTool(createdTool);
+          addMessage({
+            role: "agent",
+            content: `我在现有 MCP 里没有找到可直接复用的项，已经先在“我的Tools”里帮你生成了一条草稿“${createdTool.name}”，并打开编辑表单让你继续补充。`,
+          });
+          setCurrentSection("tools");
+          openToolForm(createdTool);
+          rememberAssistantContext({
+            target: "mcp",
+            resolvedRequest: contextualRequest,
+            action: "created_draft",
+            entity: { name: createdTool.name, id: createdTool.id, source: "draft" },
+          });
+        }
       } else {
-        const draft = buildSkillDraftFromPrompt(request);
-        setCatalogAssistantMessages((prev) => [
-          ...prev,
-          {
-            id: createId("assistant-msg"),
-            role: "assistant",
-            content: `我已经帮你生成了一个 Skill 草稿，并自动预填到表单中。你可以继续补充名称、分类和模型后保存。`,
-          },
-        ]);
-        openSkillForm(draft);
+        const referencedSkill =
+          shouldReuseAssistantEntity(request) && assistantMemory.lastEntity?.target === "skill"
+            ? skillList.find(
+                (skill) =>
+                  skill.id === assistantMemory.lastEntity?.id || skill.name === assistantMemory.lastEntity?.name
+              ) ?? null
+            : null;
+        const matchedSkill = referencedSkill ?? findBestSkillMatch(contextualRequest);
+        if (matchedSkill && currentSection === "orchestration" && appendCapabilityToCurrentAgent("skills", matchedSkill.name)) {
+          addMessage({
+            role: "agent",
+            content: `我已经在“我的Skills”里找到了 Skill“${matchedSkill.name}”，并把它直接加到当前智能体的 Skill 配置里了。`,
+          });
+          rememberAssistantContext({
+            target: "skill",
+            resolvedRequest: contextualRequest,
+            action: "attached_existing",
+            entity: { name: matchedSkill.name, id: matchedSkill.id, source: "attached" },
+          });
+        } else if (matchedSkill) {
+          addMessage({
+            role: "agent",
+            content: `我已经在“我的Skills”里找到了 Skill“${matchedSkill.name}”。当前不在智能体编排页，我先带你跳到“我的Skills”查看这条能力。`,
+          });
+          setCurrentSection("skills");
+          openSkillForm(matchedSkill);
+          rememberAssistantContext({
+            target: "skill",
+            resolvedRequest: contextualRequest,
+            action: "opened_existing",
+            entity: { name: matchedSkill.name, id: matchedSkill.id, source: "existing" },
+          });
+        } else {
+          const draft = buildSkillDraftFromPrompt(contextualRequest);
+          const createdSkill: SkillItem = {
+            id: createId("skill"),
+            name: draft.name.trim(),
+            category: draft.category.trim(),
+            model: draft.model.trim(),
+            updatedAt: formatDateTime(),
+          };
+          addSkill(createdSkill);
+          addMessage({
+            role: "agent",
+            content: `我在现有 Skill 里没有找到可直接复用的项，已经先在“我的Skills”里帮你生成了一条草稿“${createdSkill.name}”，并打开编辑表单让你继续补充。`,
+          });
+          setCurrentSection("skills");
+          openSkillForm(createdSkill);
+          rememberAssistantContext({
+            target: "skill",
+            resolvedRequest: contextualRequest,
+            action: "created_draft",
+            entity: { name: createdSkill.name, id: createdSkill.id, source: "draft" },
+          });
+        }
       }
       setCatalogAssistantGenerating(false);
     }, 500);
@@ -1312,32 +1585,48 @@ export default function Home() {
     deleteKnowledgeBase(knowledge.id);
   };
 
+  const syncCurrentJsonAppId = (updater: (currentAppId: string) => string | null | undefined) => {
+    try {
+      const parsed = JSON.parse(currentJson);
+      const currentAppId = typeof parsed?.AppId === "string" ? parsed.AppId.trim() : "";
+      const nextAppId = updater(currentAppId);
+      if (!nextAppId || nextAppId === currentAppId) return;
+      parsed.AppId = nextAppId;
+      updateJson(JSON.stringify(parsed, null, 2));
+    } catch {
+      // Ignore invalid JSON here and let the editor validation handle it.
+    }
+  };
+
   const handleCreateAppKey = () => {
     const name = window.prompt("请输入秘钥名称", `应用_${appKeyList.length + 1}`)?.trim();
     if (!name) return;
-    setAppKeyList((prev) => [
-      {
-        id: createId("app"),
-        appId: `app_${Math.random().toString().slice(2, 7)}`,
-        name,
-        status: "草稿",
-        updatedAt: formatDateTime(),
-      },
-      ...prev,
-    ]);
+    const nextAppKey: AppKeyItem = {
+      id: createId("app"),
+      appId: `app_${Math.random().toString().slice(2, 7)}`,
+      name,
+      status: "草稿",
+      updatedAt: formatDateTime(),
+    };
+    addAppKey(nextAppKey);
+    syncCurrentJsonAppId((currentAppId) => currentAppId || nextAppKey.appId);
   };
 
   const handleEditAppKey = (item: AppKeyItem) => {
     const appId = window.prompt("请输入新的 AppID", item.appId)?.trim();
     if (!appId) return;
-    setAppKeyList((prev) =>
-      prev.map((entry) => (entry.id === item.id ? { ...entry, appId, updatedAt: formatDateTime() } : entry))
-    );
+    patchAppKey(item.id, { appId, updatedAt: formatDateTime() });
+    syncCurrentJsonAppId((currentAppId) => (currentAppId === item.appId ? appId : currentAppId));
   };
 
   const handleDeleteAppKey = (item: AppKeyItem) => {
     if (!window.confirm(`确认删除秘钥“${item.name}”吗？`)) return;
-    setAppKeyList((prev) => prev.filter((entry) => entry.id !== item.id));
+    const remainingAppKeys = appKeyList.filter((entry) => entry.id !== item.id);
+    deleteAppKey(item.id);
+    syncCurrentJsonAppId((currentAppId) => {
+      if (currentAppId !== item.appId) return currentAppId;
+      return remainingAppKeys[0]?.appId ?? currentAppId;
+    });
   };
 
   const handleCreateBusinessId = () => {
@@ -1490,121 +1779,27 @@ export default function Home() {
   )}&image_size=landscape_16_9`;
 
   const renderCatalogAssistantPanel = () => (
-    currentSection === "orchestration" ? (
-      <div className="h-full min-h-0">
-        <ChatPanel />
-      </div>
-    ) : (
-    <div
-      className={`flex h-full min-h-0 flex-col overflow-hidden ${
-        isDark
-          ? "bg-zinc-950/90"
-          : "bg-white"
-      }`}
-    >
-      <div
-        className={`flex h-12 items-center border-b px-4 ${
-          isDark ? "border-zinc-800 bg-zinc-950/70" : "border-zinc-200 bg-zinc-50/80"
-        }`}
-      >
-        <div className="flex items-center gap-2">
-          <BotMessageSquare className={`h-4 w-4 ${isDark ? "text-zinc-400" : "text-zinc-500"}`} />
-          <h2 className={`text-sm font-medium ${isDark ? "text-zinc-200" : "text-zinc-800"}`}>辅助开发小助手</h2>
-        </div>
-      </div>
-
-      <div className="flex-1 space-y-4 overflow-y-auto p-4">
-        {catalogAssistantMessages.map((msg) => (
-          <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div
-              className={`max-w-[90%] whitespace-pre-wrap rounded-lg p-3 text-sm ${
-                msg.role === "user"
-                  ? "bg-blue-600 text-white"
-                  : isDark
-                    ? "bg-zinc-800 text-zinc-300"
-                    : "bg-zinc-100 text-zinc-800"
-              }`}
-            >
-              {msg.content}
-            </div>
-          </div>
-        ))}
-        {catalogAssistantGenerating && (
-          <div className="flex justify-start">
-            <div className={`flex items-center gap-2 rounded-lg p-3 text-sm ${isDark ? "bg-zinc-800 text-zinc-300" : "bg-zinc-100 text-zinc-800"}`}>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>小助手正在生成草稿...</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className={`border-t p-4 ${isDark ? "border-zinc-800 bg-zinc-950/70" : "border-zinc-200 bg-zinc-50/80"}`}>
-        <div className="mb-3 flex overflow-x-auto space-x-2 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {(catalogAssistantTarget === "agent"
-            ? ["帮我生成一个客服回访智能体", "帮我生成一个门店导购智能体", "帮我生成一个会议纪要智能体"]
-            : catalogAssistantTarget === "mcp"
-              ? ["帮我生成一个天气查询 MCP", "帮我生成一个知识检索 MCP", "帮我生成一个工单处理 MCP"]
-              : ["帮我生成一个内容审核 Skill", "帮我生成一个意图分类 Skill", "帮我生成一个话术生成 Skill"]
-          ).map((option) => (
-            <button
-              key={option}
-              type="button"
-              onClick={() => setCatalogAssistantInput(option)}
-              className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs ${
-                isDark
-                  ? "border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
-                  : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
-              }`}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-
-        <div className="relative">
-          <textarea
-            value={catalogAssistantInput}
-            onChange={(event) => setCatalogAssistantInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                handleAssistantGenerate();
-              }
-            }}
-            placeholder={
-              catalogAssistantTarget === "agent"
-                ? "描述你想生成的智能体..."
-                : catalogAssistantTarget === "mcp"
-                  ? "描述你想生成的 MCP..."
-                  : "描述你想生成的 Skill..."
-            }
-            rows={3}
-            className={`block w-full resize-none rounded-lg border pl-3 pr-14 pt-3 pb-4 text-sm outline-none transition-colors ${
-              isDark
-                ? "border-zinc-800 bg-zinc-950 text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/70"
-                : "border-zinc-300 bg-zinc-50 text-zinc-900 placeholder:text-zinc-400 focus:border-blue-400"
-            }`}
-          />
-          <button
-            type="button"
-            onClick={handleAssistantGenerate}
-            disabled={!catalogAssistantInput.trim() || catalogAssistantGenerating}
-            className={`absolute right-3 bottom-3 rounded-md p-2 transition-colors disabled:cursor-not-allowed ${
-              catalogAssistantInput.trim() && !catalogAssistantGenerating
-                ? "bg-black text-white hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
-                : isDark
-                  ? "bg-zinc-800 text-zinc-500"
-                  : "bg-zinc-100 text-zinc-500"
-            }`}
-            title="发送给小助手"
-          >
-            <ArrowUp className="h-4 w-4 stroke-[3]" />
-          </button>
-        </div>
-      </div>
-    </div>
-    )
+    <ChatPanel
+      messages={chatMessages}
+      input={chatInput}
+      onInputChange={setChatInput}
+      placeholder={
+        catalogAssistantTarget === "agent"
+          ? "描述你想生成的智能体..."
+          : catalogAssistantTarget === "mcp"
+            ? "描述你想生成的 MCP..."
+            : "描述你想生成的 Skill..."
+      }
+      quickOptions={
+        catalogAssistantTarget === "agent"
+          ? ["帮我生成一个客服回访智能体", "帮我生成一个门店导购智能体", "帮我生成一个会议纪要智能体"]
+          : catalogAssistantTarget === "mcp"
+            ? ["帮我生成一个天气查询 MCP", "帮我生成一个知识检索 MCP", "帮我生成一个工单处理 MCP"]
+            : ["帮我生成一个内容审核 Skill", "帮我生成一个意图分类 Skill", "帮我生成一个话术生成 Skill"]
+      }
+      onQuickOptionClick={setChatInput}
+      showVoiceInput={false}
+    />
   );
 
   const renderToolFormDialog = () =>

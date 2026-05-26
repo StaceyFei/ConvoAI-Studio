@@ -42,7 +42,7 @@ app.post('/api/chat', async (req, res) => {
     return;
   }
 
-  const { content, currentJson, chatMessages, model } = req.body ?? {};
+  const { content, currentJson, chatMessages, model, workspaceContext } = req.body ?? {};
 
   if (typeof content !== 'string' || !content.trim()) {
     res.status(400).json({ error: '请求缺少有效的 content。' });
@@ -69,7 +69,7 @@ app.post('/api/chat', async (req, res) => {
         messages: [
           {
             role: 'system',
-            content: buildSystemPrompt(typeof currentJson === 'string' ? currentJson : ''),
+            content: buildSystemPrompt(typeof currentJson === 'string' ? currentJson : '', workspaceContext),
           },
           ...normalizeChatMessages(chatMessages),
           { role: 'user', content },
@@ -132,9 +132,30 @@ function toUserErrorMessage(status, fallbackMessage) {
   return fallbackMessage;
 }
 
-function buildSystemPrompt(currentJson) {
-  return `你是一个专业的火山引擎“AI音视频互动方案”配置助手。
-你的任务是根据用户的需求，生成或修改 StartVoiceChat (Version: 2025-06-01) 接口的 JSON 配置。
+function buildSystemPrompt(currentJson, workspaceContext) {
+  const currentSection =
+    workspaceContext && typeof workspaceContext.currentSection === 'string'
+      ? workspaceContext.currentSection
+      : 'orchestration';
+  const currentAgentName =
+    workspaceContext && typeof workspaceContext.agentName === 'string' ? workspaceContext.agentName : '';
+  const toolSummary = summarizeCollection(workspaceContext?.toolList, ['name', 'type', 'status']);
+  const skillSummary = summarizeCollection(workspaceContext?.skillList, ['name', 'category', 'model']);
+  const knowledgeSummary = summarizeCollection(workspaceContext?.knowledgeBaseList, ['name', 'type', 'status']);
+  const resourceSummary = summarizeCollection(workspaceContext?.resourceList, ['name', 'kind', 'status', 'providerLabel']);
+
+  return `你是 ConvoAI Studio 的左侧辅助开发小助手。
+你需要基于对话历史、当前工作区、当前智能体配置和现有资源清单来回答用户问题。
+
+当前工作区：${currentSection}
+当前智能体：${currentAgentName || '未指定'}
+已有 Tools/MCP：${toolSummary}
+已有 Skills：${skillSummary}
+已有知识库：${knowledgeSummary}
+已有三方资源：${resourceSummary}
+
+当工作区是 orchestration 时，你的核心职责是根据用户需求生成或修改 StartVoiceChat (Version: 2025-06-01) 接口 JSON。
+当工作区不是 orchestration 时，你的核心职责是回答用户问题、利用已有资源清单判断“有没有现成的 skill/mcp/知识库/资源”，并给出明确建议。此时不要臆造“已经创建/已经添加/已经跳转”，除非用户消息里已经明确说明这些动作发生了。
 
 以下是接口文档的概要：
 1. 必填参数: AppId, RoomId, TaskId, AgentConfig, Config。
@@ -162,11 +183,14 @@ function buildSystemPrompt(currentJson) {
 ${currentJson}
 
 要求：
-1. 仔细分析用户的需求，例如是否需要修改特定的音色、大模型名字、欢迎语、是否开启数字人或联网问答等。如果是询问错误排查，则根据错误码速查表解答。
-2. 你的回复必须包含简短的解释文本，说明你修改了什么，或者解释错误原因及解决方案。
-3. 如果你修改了配置，你的回复中必须且只能包含一个 JSON 代码块 (以 \`\`\`json 开始，以 \`\`\` 结束)，包含完整的最新配置。如果用户仅在咨询错误码或问题排查，则无需输出 JSON 代码块。
-4. 生成的 JSON 必须严格符合 StartVoiceChat 的嵌套结构。
-5. 永远不要在 JSON 中生成注释或非标准的 JSON 语法。
+1. 仔细分析用户需求，并结合最近几轮对话理解上下文省略、代词指代和延续修改。
+2. 如果用户在询问错误排查，则根据错误码速查表解答。
+3. 如果用户是在要求“生成/创建/新建一个智能体”，无论当前工作区是否是 orchestration，你都必须给出简短解释，并且输出一个且仅一个完整 JSON 代码块。前端会基于这段 JSON 真正创建智能体。
+4. 如果当前工作区是 orchestration，且用户是在要配置、修改配置、要 JSON、要代码块、要“跑通流程”的示例，你也必须输出一个且仅一个完整 JSON 代码块。
+5. 如果当前工作区不是 orchestration，且用户不是在要求创建智能体或索取配置示例，则不要输出 JSON 代码块，也不要假装已经执行了前端动作。
+6. 如果用户询问“有没有现成的 Skill / MCP / Tool”，先基于已有清单判断，再明确回答“找到了什么”或“没找到什么”。
+7. 生成的 JSON 必须严格符合 StartVoiceChat 的嵌套结构，且永远不要在 JSON 中生成注释或非标准 JSON 语法。
+8. 不要把 AppId、RoomId、TaskId、AgentConfig.UserId、AgentConfig.TargetUserId 留空；如果用户没有提供真实值，请使用可运行的占位值，例如 demo_app_id、demo_room_id、demo_task_id、demo_agent_user、["demo_user"]。
 
 示例：
 用户：帮我加上欢迎语，内容是“你好呀”
@@ -189,4 +213,18 @@ ${currentJson}
 }
 \`\`\`
 `;
+}
+
+function summarizeCollection(items, fields) {
+  if (!Array.isArray(items) || items.length === 0) return '无';
+  return items
+    .slice(0, 12)
+    .map((item) =>
+      fields
+        .map((field) => (item && typeof item[field] === 'string' ? item[field] : ''))
+        .filter(Boolean)
+        .join(' / ')
+    )
+    .filter(Boolean)
+    .join('；');
 }

@@ -14,6 +14,22 @@ export interface ChatMessage {
   content: string;
 }
 
+export type AssistantTarget = 'agent' | 'mcp' | 'skill';
+
+export interface AssistantMemoryEntity {
+  target: AssistantTarget;
+  name: string;
+  id?: string;
+  source: 'existing' | 'draft' | 'created' | 'attached';
+}
+
+export interface AssistantMemory {
+  lastTarget: AssistantTarget | null;
+  lastResolvedRequest: string;
+  lastAction: 'created_agent' | 'attached_existing' | 'opened_existing' | 'created_draft' | null;
+  lastEntity: AssistantMemoryEntity | null;
+}
+
 // 定义 StartVoiceChat 的 JSON Schema 规则
 const startVoiceChatSchema = {
   type: "object",
@@ -145,6 +161,23 @@ export interface VoiceProfile {
   expired?: boolean;
 }
 
+export interface AppKeyItem {
+  id: string;
+  appId: string;
+  name: string;
+  status: '已启用' | '草稿';
+  updatedAt: string;
+}
+
+export interface RuntimeCallInfo {
+  appId: string;
+  roomId: string;
+  userId: string;
+  targetUserId: string;
+  taskId: string;
+  agentUserId: string;
+}
+
 export interface ToolItem {
   id: string;
   name: string;
@@ -173,6 +206,9 @@ export interface KnowledgeBaseItem {
 type OrchestrationPreset = 'default' | 'blank';
 type ViewMode = 'detail' | 'code';
 type PersistedWorkspaceState = {
+  chatMessages: WorkspaceState['chatMessages'];
+  chatInput: WorkspaceState['chatInput'];
+  assistantMemory: WorkspaceState['assistantMemory'];
   theme: WorkspaceState['theme'];
   currentSection: WorkspaceState['currentSection'];
   isSidebarCollapsed: WorkspaceState['isSidebarCollapsed'];
@@ -188,21 +224,26 @@ type PersistedWorkspaceState = {
   knowledgeBaseList: WorkspaceState['knowledgeBaseList'];
   toolList: WorkspaceState['toolList'];
   skillList: WorkspaceState['skillList'];
+  appKeyList: WorkspaceState['appKeyList'];
   resourceList: WorkspaceState['resourceList'];
 };
 
 interface WorkspaceState {
   chatMessages: ChatMessage[];
+  assistantMemory: AssistantMemory;
   currentJson: string;
   isGenerating: boolean;
   isValid: boolean;
   validationErrors: string[];
   addMessage: (message: Omit<ChatMessage, 'id'>) => void;
+  setAssistantMemory: (patch: Partial<AssistantMemory>) => void;
+  resetAssistantMemory: () => void;
   updateJson: (json: string) => void;
   setGenerating: (status: boolean) => void;
   sendMessage: (content: string) => Promise<void>;
   validateCurrentJson: () => void;
   isCalling: boolean;
+  currentCallInfo: RuntimeCallInfo | null;
   isMicOn: boolean;
   isVideoOn: boolean;
   theme: 'light' | 'dark';
@@ -237,6 +278,7 @@ interface WorkspaceState {
   knowledgeBaseList: KnowledgeBaseItem[];
   toolList: ToolItem[];
   skillList: SkillItem[];
+  appKeyList: AppKeyItem[];
   resourceList: ThirdPartyResourceItem[];
   openAgentEditor: (agent: AgentSummary, preset?: OrchestrationPreset) => void;
   addAgent: (agent: AgentSummary) => void;
@@ -254,6 +296,9 @@ interface WorkspaceState {
   addSkill: (skill: SkillItem) => void;
   updateSkill: (skillId: string, patch: Partial<SkillItem>) => void;
   deleteSkill: (skillId: string) => void;
+  addAppKey: (appKey: AppKeyItem) => void;
+  updateAppKey: (appKeyId: string, patch: Partial<AppKeyItem>) => void;
+  deleteAppKey: (appKeyId: string) => void;
   addResource: (resource: ThirdPartyResourceItem) => void;
   updateResource: (resourceId: string, patch: Partial<ThirdPartyResourceItem>) => void;
   deleteResource: (resourceId: string) => void;
@@ -261,9 +306,150 @@ interface WorkspaceState {
 
 const defaultResourceList = defaultThirdPartyResources;
 
+const DEFAULT_RUNTIME_IDS = {
+  appId: "demo_app_id",
+  roomId: "demo_room_id",
+  taskId: "demo_task_id",
+  userId: "demo_agent_user",
+  targetUserId: "demo_user",
+} as const;
+
+const defaultAppKeyList: AppKeyItem[] = [
+  { id: "app-1", appId: "app_10001", name: "正式环境", status: "已启用", updatedAt: "2026-05-14 10:22" },
+  { id: "app-2", appId: "app_10002", name: "测试环境", status: "草稿", updatedAt: "2026-05-13 18:40" },
+];
+
+type RuntimeDefaultsOptions = {
+  appKeys?: AppKeyItem[];
+  callInfo?: RuntimeCallInfo | null;
+};
+
+function createRandomSuffix(length = 8) {
+  return Math.random().toString(36).slice(2, 2 + length);
+}
+
+function isRuntimePlaceholderValue(value: unknown, fallback: string) {
+  return typeof value !== "string" || !value.trim() || value.trim() === fallback || value.trim().startsWith("demo_");
+}
+
+function getValidAppIds(appKeys: AppKeyItem[]) {
+  return appKeys.map((item) => item.appId.trim()).filter(Boolean);
+}
+
+function resolveRuntimeAppId(appKeys: AppKeyItem[], currentAppId?: string, preferredAppId?: string) {
+  const appIds = getValidAppIds(appKeys);
+  if (preferredAppId && appIds.includes(preferredAppId)) return preferredAppId;
+  if (currentAppId && appIds.includes(currentAppId)) return currentAppId;
+  if (appIds.length > 0) return appIds[0];
+  if (preferredAppId?.trim()) return preferredAppId.trim();
+  if (currentAppId?.trim()) return currentAppId.trim();
+  return DEFAULT_RUNTIME_IDS.appId;
+}
+
+function normalizeTargetUserId(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) return "";
+  const firstValue = typeof value[0] === "string" ? value[0].trim() : "";
+  return isRuntimePlaceholderValue(firstValue, DEFAULT_RUNTIME_IDS.targetUserId) ? "" : firstValue;
+}
+
+function createRuntimeCallInfo(appKeys: AppKeyItem[], preferredAppId?: string): RuntimeCallInfo {
+  const appId = resolveRuntimeAppId(appKeys, undefined, preferredAppId);
+  const timestamp = Date.now().toString(36);
+  const roomId = `ConversationalAIRoom_${timestamp}_${createRandomSuffix(6)}`;
+  const targetUserId = `user_${createRandomSuffix(8)}`;
+
+  return {
+    appId,
+    roomId,
+    userId: targetUserId,
+    targetUserId,
+    taskId: `task_${timestamp}_${createRandomSuffix(6)}`,
+    agentUserId: `agent_${createRandomSuffix(8)}`,
+  };
+}
+
+function extractRuntimeCallInfo(config: unknown): RuntimeCallInfo | null {
+  let normalizedConfig = config;
+  if (typeof normalizedConfig === "string") {
+    try {
+      normalizedConfig = JSON.parse(normalizedConfig);
+    } catch {
+      return null;
+    }
+  }
+  if (!normalizedConfig || typeof normalizedConfig !== "object") return null;
+
+  const appId =
+    typeof (normalizedConfig as { AppId?: unknown }).AppId === "string"
+      ? (normalizedConfig as { AppId: string }).AppId.trim()
+      : "";
+  const roomId =
+    typeof (normalizedConfig as { RoomId?: unknown }).RoomId === "string"
+      ? (normalizedConfig as { RoomId: string }).RoomId.trim()
+      : "";
+  const taskId =
+    typeof (normalizedConfig as { TaskId?: unknown }).TaskId === "string"
+      ? (normalizedConfig as { TaskId: string }).TaskId.trim()
+      : "";
+  const agentConfig = (normalizedConfig as { AgentConfig?: unknown }).AgentConfig;
+  const agentUserId =
+    agentConfig && typeof agentConfig === "object" && typeof (agentConfig as { UserId?: unknown }).UserId === "string"
+      ? (agentConfig as { UserId: string }).UserId.trim()
+      : "";
+  const targetUserId =
+    agentConfig && typeof agentConfig === "object"
+      ? normalizeTargetUserId((agentConfig as { TargetUserId?: unknown }).TargetUserId)
+      : "";
+
+  if (!appId && !roomId && !taskId && !agentUserId && !targetUserId) {
+    return null;
+  }
+
+  return {
+    appId,
+    roomId,
+    taskId,
+    userId: targetUserId,
+    targetUserId,
+    agentUserId,
+  };
+}
+
+function withRuntimeDefaults(rawConfig: unknown, options?: RuntimeDefaultsOptions) {
+  const appKeys = options?.appKeys ?? defaultAppKeyList;
+  const draft =
+    rawConfig && typeof rawConfig === "object" ? JSON.parse(JSON.stringify(rawConfig)) : JSON.parse(buildEmptyConfigJson());
+  const currentAppId = typeof draft.AppId === "string" ? draft.AppId.trim() : "";
+  const resolvedAppId = resolveRuntimeAppId(appKeys, currentAppId, options?.callInfo?.appId);
+  const runtimeCallInfo = options?.callInfo ?? createRuntimeCallInfo(appKeys, resolvedAppId);
+  const currentRoomId = typeof draft.RoomId === "string" ? draft.RoomId.trim() : "";
+  const currentTaskId = typeof draft.TaskId === "string" ? draft.TaskId.trim() : "";
+
+  draft.AppId = resolvedAppId;
+  draft.RoomId = isRuntimePlaceholderValue(currentRoomId, DEFAULT_RUNTIME_IDS.roomId) ? runtimeCallInfo.roomId : currentRoomId;
+  draft.TaskId = isRuntimePlaceholderValue(currentTaskId, DEFAULT_RUNTIME_IDS.taskId) ? runtimeCallInfo.taskId : currentTaskId;
+
+  draft.AgentConfig = draft.AgentConfig && typeof draft.AgentConfig === "object" ? draft.AgentConfig : {};
+  const currentUserId = typeof draft.AgentConfig.UserId === "string" ? draft.AgentConfig.UserId.trim() : "";
+  draft.AgentConfig.UserId = isRuntimePlaceholderValue(currentUserId, DEFAULT_RUNTIME_IDS.userId)
+    ? runtimeCallInfo.agentUserId
+    : currentUserId;
+  draft.AgentConfig.TargetUserId = [normalizeTargetUserId(draft.AgentConfig.TargetUserId) || runtimeCallInfo.targetUserId];
+
+  return draft;
+}
+
+function ensureRuntimeConfigJson(json: string | undefined, fallbackJson: string, options?: RuntimeDefaultsOptions) {
+  try {
+    return JSON.stringify(withRuntimeDefaults(JSON.parse(json || fallbackJson), options), null, 2);
+  } catch {
+    return JSON.stringify(withRuntimeDefaults(JSON.parse(fallbackJson), options), null, 2);
+  }
+}
+
 export function buildEmptyConfigJson() {
   return JSON.stringify(
-    {
+    withRuntimeDefaults({
       AppId: "",
       RoomId: "",
       TaskId: "",
@@ -316,7 +502,7 @@ export function buildEmptyConfigJson() {
           },
         },
       },
-    },
+    }),
     null,
     2
   );
@@ -341,6 +527,8 @@ function buildManagedReference(resource: ThirdPartyResourceItem, extra: Record<s
 
 export function buildAgentConfigJson(options?: {
   resources?: ThirdPartyResourceItem[];
+  appKeys?: AppKeyItem[];
+  callInfo?: RuntimeCallInfo | null;
   llmResourceId?: string;
   llmModel?: string;
   llmThinkingMode?: "off" | "on" | "auto";
@@ -359,7 +547,10 @@ export function buildAgentConfigJson(options?: {
   const llmResource = findResourceById(resources, options?.llmResourceId) ?? getDefaultResource(resources, "LLM");
   const asrResource = findResourceById(resources, options?.asrResourceId) ?? getDefaultResource(resources, "ASR");
   const ttsResource = findResourceById(resources, options?.ttsResourceId) ?? getDefaultResource(resources, "TTS");
-  const base = JSON.parse(buildEmptyConfigJson());
+  const base = withRuntimeDefaults(JSON.parse(buildEmptyConfigJson()), {
+    appKeys: options?.appKeys,
+    callInfo: options?.callInfo,
+  });
 
   base.AgentConfig.TargetUserId = [""];
   base.AgentConfig.WelcomeMessage = options?.welcomeMessage ?? "你好，有什么我可以帮助你的？";
@@ -428,6 +619,115 @@ function getVoiceDisplayLabel(resources: ThirdPartyResourceItem[], voiceValue?: 
   return resources
     .flatMap((resource) => resource.voiceOptions)
     .find((voice) => voice.value === voiceValue)?.label ?? voiceValue;
+}
+
+function isAgentCreationRequest(content: string) {
+  return /(智能体|agent|助手|机器人)/i.test(content) && /(生成|创建|新建|做一个|给我一个|帮我生成|帮我创建)/i.test(content);
+}
+
+function inferGeneratedAgentName(request: string, index: number) {
+  const lower = request.toLowerCase();
+  if (lower.includes('导购') || lower.includes('门店')) return '门店导购智能体';
+  if (lower.includes('客服') || lower.includes('回访')) return '客服回访智能体';
+  if (lower.includes('会议') || lower.includes('纪要')) return '会议纪要智能体';
+  if (lower.includes('满意度') || lower.includes('调查')) return '满意度调查智能体';
+  if (lower.includes('助手')) return '智能助手';
+  return `智能体_${index}`;
+}
+
+function inferGeneratedAgentDescription(request: string) {
+  const lower = request.toLowerCase();
+  if (lower.includes('导购') || lower.includes('门店')) return '门店导购';
+  if (lower.includes('客服') || lower.includes('回访')) return '客服回访';
+  if (lower.includes('会议') || lower.includes('纪要')) return '会议纪要';
+  if (lower.includes('满意度') || lower.includes('调查')) return '满意度调查';
+  if (lower.includes('陪聊') || lower.includes('陪伴')) return '情感陪伴';
+  if (lower.includes('翻译')) return '实时翻译';
+  if (lower.includes('助手')) return '智能助手';
+  return '自定义智能体';
+}
+
+function stripJsonCodeBlock(reply: string) {
+  return reply.replace(/```json\s*([\s\S]*?)\s*```/i, '').trim();
+}
+
+function extractJsonCodeBlock(reply: string) {
+  const match = reply.match(/```json\s*([\s\S]*?)\s*```/i);
+  return typeof match?.[1] === 'string' ? match[1].trim() : null;
+}
+
+function normalizeAgentDescriptionText(text: string) {
+  return text
+    .replace(/^已(?:经)?为您生成[^\n。；:：]*[。；:：]?\s*/u, '')
+    .replace(/^我已经帮你生成[^\n。；:：]*[。；:：]?\s*/u, '')
+    .replace(/^下面是[^\n。；:：]*[。；:：]?\s*/u, '')
+    .replace(/^\d+[.、]\s*/gm, '')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+}
+
+function inferGeneratedAgentDetailDescription(params: {
+  reply: string;
+  systemPrompt: string;
+  welcomeMessage: string;
+  request: string;
+}) {
+  const cleanedReply = normalizeAgentDescriptionText(stripJsonCodeBlock(params.reply));
+  if (cleanedReply) {
+    const firstParagraph = cleanedReply.split(/\n+/).find((item) => item.trim());
+    if (firstParagraph) return firstParagraph.trim();
+  }
+  if (params.systemPrompt) {
+    return params.systemPrompt.trim().slice(0, 120);
+  }
+  if (params.welcomeMessage) {
+    return `适用于${inferGeneratedAgentDescription(params.request)}场景，欢迎语已配置为“${params.welcomeMessage.trim()}”`;
+  }
+  return '由小助手生成的智能体草稿';
+}
+
+function buildGeneratedAgentSummary(params: {
+  request: string;
+  reply: string;
+  json: string;
+  resources: ThirdPartyResourceItem[];
+  appKeys: AppKeyItem[];
+  agentCount: number;
+}): AgentSummary | null {
+  try {
+    const parsed = withRuntimeDefaults(JSON.parse(params.json), { appKeys: params.appKeys });
+    const model = typeof parsed?.Config?.LLMConfig?.ModelName === 'string' ? parsed.Config.LLMConfig.ModelName : '';
+    const voiceValue =
+      typeof parsed?.Config?.TTSConfig?.ProviderParams?.audio?.voice_type === 'string'
+        ? parsed.Config.TTSConfig.ProviderParams.audio.voice_type
+        : '';
+    const explanation = params.reply.replace(/```json\n[\s\S]*?\n```/, '').trim();
+    const systemPrompt = Array.isArray(parsed?.Config?.LLMConfig?.SystemMessages)
+      ? parsed.Config.LLMConfig.SystemMessages.find((item: unknown) => typeof item === 'string' && item.trim())
+      : '';
+    const welcomeMessage =
+      typeof parsed?.AgentConfig?.WelcomeMessage === 'string' ? parsed.AgentConfig.WelcomeMessage : '';
+    const detailDescription = inferGeneratedAgentDetailDescription({
+      reply: explanation,
+      systemPrompt: typeof systemPrompt === 'string' ? systemPrompt : '',
+      welcomeMessage,
+      request: params.request,
+    });
+
+    return {
+      id: `agent-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+      name: inferGeneratedAgentName(params.request, params.agentCount + 1),
+      description: inferGeneratedAgentDescription(params.request),
+      detailDescription,
+      botId: `xbot${Math.random().toString(36).slice(2, 10)}`,
+      model,
+      voice: getVoiceDisplayLabel(params.resources, voiceValue) || voiceValue,
+      updatedAt: formatWorkspaceDateTime(),
+      configJson: JSON.stringify(parsed, null, 2),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function formatWorkspaceDateTime() {
@@ -630,7 +930,7 @@ const defaultSkillList: SkillItem[] = [
 ];
 
 const WORKSPACE_PERSIST_KEY = 'convoai-workspace';
-const WORKSPACE_PERSIST_VERSION = 1;
+const WORKSPACE_PERSIST_VERSION = 2;
 
 function getVoiceValueByLabel(resources: ThirdPartyResourceItem[], voiceLabel?: string) {
   if (!voiceLabel) return undefined;
@@ -662,7 +962,7 @@ function normalizeResourceList(resources: unknown): ThirdPartyResourceItem[] {
     }));
 }
 
-function normalizeAgentList(agents: unknown, resources: ThirdPartyResourceItem[]): AgentSummary[] {
+function normalizeAgentList(agents: unknown, resources: ThirdPartyResourceItem[], appKeys: AppKeyItem[]): AgentSummary[] {
   if (!Array.isArray(agents) || agents.length === 0) return defaultAgentList;
 
   return agents
@@ -687,9 +987,18 @@ function normalizeAgentList(agents: unknown, resources: ThirdPartyResourceItem[]
         updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : formatWorkspaceDateTime(),
         configJson:
           typeof item.configJson === 'string' && item.configJson.trim()
-            ? item.configJson
+            ? ensureRuntimeConfigJson(item.configJson, buildAgentConfigJson({
+                resources,
+                appKeys,
+                llmResourceId: llmResource?.id,
+                llmModel: model,
+                ttsResourceId: ttsResource?.id,
+                ttsVoice: inferredVoiceValue,
+                prompt: typeof item.detailDescription === 'string' ? item.detailDescription : undefined,
+              }), { appKeys })
             : buildAgentConfigJson({
                 resources,
+                appKeys,
                 llmResourceId: llmResource?.id,
                 llmModel: model,
                 ttsResourceId: ttsResource?.id,
@@ -712,13 +1021,36 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
       content: '你好！我是 StartVoiceChat 配置助手。\n你可以直接用自然语言或语音告诉我你的需求，例如："我想开启一个语音聊天"、"我想开启声纹降噪。"\n或者，你也可以把已有的 JSON 配置粘贴在右侧，我会帮你校验和修改。\n如果遇到启动智能体失败的错误事件或错误码，也可以发给我帮你排查原因哦。'
     }
   ],
+  assistantMemory: {
+    lastTarget: null,
+    lastResolvedRequest: '',
+    lastAction: null,
+    lastEntity: null,
+  },
   currentJson: defaultAgentList[0].configJson,
   isGenerating: false,
   ...getValidationState(defaultAgentList[0].configJson),
   isCalling: false,
+  currentCallInfo: extractRuntimeCallInfo(defaultAgentList[0].configJson),
   callError: null,
   chatInput: '',
   setChatInput: (input) => set({ chatInput: input }),
+  setAssistantMemory: (patch) =>
+    set((state) => ({
+      assistantMemory: {
+        ...state.assistantMemory,
+        ...patch,
+      },
+    })),
+  resetAssistantMemory: () =>
+    set({
+      assistantMemory: {
+        lastTarget: null,
+        lastResolvedRequest: '',
+        lastAction: null,
+        lastEntity: null,
+      },
+    }),
   agentName: defaultAgentList[0].name,
   setAgentName: (name) =>
     set((state) => ({
@@ -753,21 +1085,37 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
   knowledgeBaseList: defaultKnowledgeBaseList,
   toolList: defaultToolList,
   skillList: defaultSkillList,
+  appKeyList: defaultAppKeyList,
   resourceList: defaultResourceList,
-  openAgentEditor: (agent, preset = 'default') =>
+  openAgentEditor: (agent, preset = 'default') => {
+    const nextJson =
+      preset === 'blank'
+        ? ensureRuntimeConfigJson(agent.configJson, blankInitialJson, { appKeys: get().appKeyList })
+        : ensureRuntimeConfigJson(agent.configJson, initialJson, { appKeys: get().appKeyList });
     set({
       currentAgentId: agent.id,
       agentName: agent.name,
       agentDescription: agent.detailDescription,
       orchestrationPreset: preset,
-      currentJson: preset === 'blank' ? (agent.configJson || blankInitialJson) : (agent.configJson || initialJson),
-      ...getValidationState(preset === 'blank' ? (agent.configJson || blankInitialJson) : (agent.configJson || initialJson)),
+      currentJson: nextJson,
+      currentCallInfo: extractRuntimeCallInfo(JSON.parse(nextJson)),
+      ...getValidationState(nextJson),
       currentSection: 'orchestration'
-    }),
+    });
+  },
   addAgent: (agent) =>
-    set((state) => ({
-      agentList: [{ ...agent, configJson: agent.configJson || blankInitialJson }, ...state.agentList]
-    })),
+    set((state) => {
+      const normalizedConfigJson = ensureRuntimeConfigJson(agent.configJson, blankInitialJson, { appKeys: state.appKeyList });
+      return {
+        agentList: [
+          {
+            ...agent,
+            configJson: normalizedConfigJson,
+          },
+          ...state.agentList,
+        ]
+      };
+    }),
   removeAgent: (agentId) =>
     set((state) => ({
       agentList: state.agentList.filter((agent) => agent.id !== agentId),
@@ -827,6 +1175,20 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
     set((state) => ({
       skillList: state.skillList.filter((skill) => skill.id !== skillId)
     })),
+  addAppKey: (appKey) =>
+    set((state) => ({
+      appKeyList: [appKey, ...state.appKeyList]
+    })),
+  updateAppKey: (appKeyId, patch) =>
+    set((state) => ({
+      appKeyList: state.appKeyList.map((appKey) =>
+        appKey.id === appKeyId ? { ...appKey, ...patch } : appKey
+      )
+    })),
+  deleteAppKey: (appKeyId) =>
+    set((state) => ({
+      appKeyList: state.appKeyList.filter((appKey) => appKey.id !== appKeyId)
+    })),
   addResource: (resource) =>
     set((state) => ({
       resourceList: [resource, ...state.resourceList]
@@ -852,7 +1214,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
   setApiConfig: (config) => set((state) => ({ apiConfig: { ...state.apiConfig, ...config } })),
 
   toggleCall: (configOverride) => {
-    const { isCalling, isValid, currentJson } = get();
+    const { isCalling, isValid, currentJson, appKeyList } = get();
     if (isCalling) {
       set({ isCalling: false, callError: null });
       return;
@@ -870,12 +1232,29 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
     }
 
     try {
-      const parsed = JSON.parse(targetJson);
+      const rawTargetConfig = JSON.parse(targetJson);
+      const parsed = withRuntimeDefaults(rawTargetConfig, {
+        appKeys: appKeyList,
+        callInfo: createRuntimeCallInfo(
+          appKeyList,
+          typeof rawTargetConfig?.AppId === "string" ? rawTargetConfig.AppId : undefined
+        ),
+      });
+      const runtimeCallInfo = extractRuntimeCallInfo(parsed);
+      const nextJson = JSON.stringify(parsed, null, 2);
+      const sharedCallState = {
+        currentCallInfo: runtimeCallInfo,
+      };
+
+      if (!configOverride) {
+        get().updateJson(nextJson);
+      }
       
       // 仅在 TaskId 为特定值时模拟深层的业务报错，以便正常情况下可以展示通话成功的 UI
       if (parsed.TaskId === 'error_appid') {
         set({ 
           isCalling: true, 
+          ...sharedCallState,
           callError: JSON.stringify({ EventType: 1, RunStage: "taskStart", ErrorInfo: { Errorcode: 1000001, Reason: "AppId 无效，未授权或未开通服务" } }, null, 2) 
         });
         return;
@@ -884,6 +1263,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
       if (parsed.TaskId === 'error_asr') {
         set({ 
           isCalling: true, 
+          ...sharedCallState,
           callError: JSON.stringify({ EventType: 1, RunStage: "asr", ErrorInfo: { Errorcode: 1003001, Reason: "ASR 实例化失败，ProviderParams 参数不完整" } }, null, 2) 
         });
         return;
@@ -893,16 +1273,20 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
          // 模拟免费额度耗尽
          set({ 
           isCalling: true, 
+          ...sharedCallState,
           callError: JSON.stringify({ EventType: 1, RunStage: "tts", ErrorInfo: { Errorcode: 1005001, Reason: "quota exceeded for types [...]" } }, null, 2) 
         });
         return;
       }
 
+      set({ isCalling: true, callError: null, ...sharedCallState });
+      return;
+
     } catch (e) {
       // 忽略解析错误，由 isValid 控制
     }
 
-    set({ isCalling: true, callError: null });
+    set({ isCalling: true, callError: null, currentCallInfo: extractRuntimeCallInfo(currentJson) });
   },
   toggleMic: () => set((state) => ({ isMicOn: !state.isMicOn })),
   toggleVideo: () => set((state) => ({ isVideoOn: !state.isVideoOn })),
@@ -940,8 +1324,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
 
   updateJson: (json) => {
     let nextAgentPatch: Partial<AgentSummary> | null = null;
+    let nextCurrentCallInfo: RuntimeCallInfo | null = null;
     try {
       const parsed = JSON.parse(json);
+      nextCurrentCallInfo = extractRuntimeCallInfo(parsed);
       const nextModel = parsed?.Config?.LLMConfig?.ModelName;
       const nextVoiceType = parsed?.Config?.TTSConfig?.ProviderParams?.audio?.voice_type;
       const { resourceList } = get();
@@ -957,6 +1343,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
 
     set((state) => ({
       currentJson: json,
+      currentCallInfo: nextCurrentCallInfo ?? state.currentCallInfo,
       agentList:
         state.currentAgentId && nextAgentPatch
           ? state.agentList.map((agent) =>
@@ -970,7 +1357,27 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
   setGenerating: (status) => set({ isGenerating: status }),
 
   sendMessage: async (content) => {
-    const { addMessage, setGenerating, currentJson, updateJson, apiConfig, chatMessages } = get();
+    const {
+      addMessage,
+      setGenerating,
+      currentJson,
+        currentCallInfo,
+      updateJson,
+      apiConfig,
+      chatMessages,
+      currentSection,
+      currentAgentId,
+      agentName,
+      toolList,
+      skillList,
+        appKeyList,
+      knowledgeBaseList,
+      resourceList,
+      agentList,
+      addAgent,
+      openAgentEditor,
+      setViewMode,
+    } = get();
     
     addMessage({ role: 'user', content });
     setGenerating(true);
@@ -990,7 +1397,43 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
           content,
           currentJson,
           chatMessages,
-          model: apiConfig.model || 'ep-20240508-xxx'
+          model: apiConfig.model || 'ep-20240508-xxx',
+          workspaceContext: {
+            currentSection,
+            currentAgentId,
+            agentName,
+            appKeyList: appKeyList.map((appKey) => ({
+              id: appKey.id,
+              appId: appKey.appId,
+              name: appKey.name,
+              status: appKey.status,
+            })),
+            toolList: toolList.map((tool) => ({
+              id: tool.id,
+              name: tool.name,
+              type: tool.type,
+              status: tool.status,
+            })),
+            skillList: skillList.map((skill) => ({
+              id: skill.id,
+              name: skill.name,
+              category: skill.category,
+              model: skill.model,
+            })),
+            knowledgeBaseList: knowledgeBaseList.map((knowledge) => ({
+              id: knowledge.id,
+              name: knowledge.name,
+              type: knowledge.type,
+              status: knowledge.status,
+            })),
+            resourceList: resourceList.map((resource) => ({
+              id: resource.id,
+              name: resource.name,
+              kind: resource.kind,
+              status: resource.status,
+              providerLabel: resource.providerLabel,
+            })),
+          },
         })
       });
 
@@ -1003,22 +1446,46 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
       const reply = typeof payload.reply === 'string' ? payload.reply : '抱歉，我未能生成回复。';
       
       // 提取 JSON 和文本
-      const jsonMatch = reply.match(/```json\n([\s\S]*?)\n```/);
+      const extractedJson = extractJsonCodeBlock(reply);
       let newJson = currentJson;
       let textReply = reply;
+      const shouldCreateAgent = Boolean(extractedJson && isAgentCreationRequest(content));
 
-      if (jsonMatch && jsonMatch[1]) {
-        try {
-          const parsed = JSON.parse(jsonMatch[1]);
-          newJson = JSON.stringify(parsed, null, 2);
-          textReply = reply.replace(/```json\n[\s\S]*?\n```/, `\`\`\`json\n${newJson}\n\`\`\``);
-        } catch (e) {
-          console.error("Failed to parse extracted JSON:", e);
+      if (currentSection === 'orchestration' && extractedJson) {
+        if (!shouldCreateAgent) {
+          try {
+            const parsed = withRuntimeDefaults(JSON.parse(extractedJson), {
+              appKeys: appKeyList,
+              callInfo: currentCallInfo,
+            });
+            newJson = JSON.stringify(parsed, null, 2);
+            textReply = reply.replace(/```json\s*[\s\S]*?\s*```/i, `\`\`\`json\n${newJson}\n\`\`\``);
+          } catch (e) {
+            console.error("Failed to parse extracted JSON:", e);
+          }
         }
       }
 
-      updateJson(newJson);
+      if (!shouldCreateAgent) {
+        updateJson(newJson);
+      }
       addMessage({ role: 'agent', content: textReply });
+
+      if (shouldCreateAgent && extractedJson) {
+        const createdAgent = buildGeneratedAgentSummary({
+          request: content,
+          reply: textReply,
+          json: extractedJson,
+          resources: resourceList,
+          appKeys: appKeyList,
+          agentCount: agentList.length,
+        });
+        if (createdAgent) {
+          addAgent(createdAgent);
+          setViewMode('detail');
+          openAgentEditor(createdAgent, 'default');
+        }
+      }
 
     } catch (error: any) {
       if (error.name === 'AbortError' || error.name === 'APIUserAbortError' || error.message?.toLowerCase().includes('aborted')) {
@@ -1041,6 +1508,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
   version: WORKSPACE_PERSIST_VERSION,
   storage: createJSONStorage(() => localStorage),
   partialize: (state): PersistedWorkspaceState => ({
+    chatMessages: state.chatMessages,
+    chatInput: state.chatInput,
+    assistantMemory: state.assistantMemory,
     theme: state.theme,
     currentSection: state.currentSection,
     isSidebarCollapsed: state.isSidebarCollapsed,
@@ -1056,21 +1526,28 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
     knowledgeBaseList: state.knowledgeBaseList,
     toolList: state.toolList,
     skillList: state.skillList,
+    appKeyList: state.appKeyList,
     resourceList: state.resourceList,
   }),
   merge: (persistedState, currentState) => {
     const persisted = (persistedState ?? {}) as Partial<PersistedWorkspaceState>;
+    const appKeyList = Array.isArray(persisted.appKeyList) && persisted.appKeyList.length > 0 ? persisted.appKeyList : defaultAppKeyList;
     const resourceList = normalizeResourceList(persisted.resourceList);
-    const agentList = normalizeAgentList(persisted.agentList, resourceList);
+    const agentList = normalizeAgentList(persisted.agentList, resourceList, appKeyList);
     const selectedAgent = getSelectedAgent(agentList, persisted.currentAgentId);
     const currentJson =
       typeof persisted.currentJson === 'string' && persisted.currentJson.trim()
-        ? persisted.currentJson
+        ? ensureRuntimeConfigJson(persisted.currentJson, selectedAgent?.configJson ?? currentState.currentJson, { appKeys: appKeyList })
         : selectedAgent?.configJson ?? currentState.currentJson;
     const validationState = getValidationState(currentJson);
 
     return {
       ...currentState,
+      chatMessages: Array.isArray(persisted.chatMessages) && persisted.chatMessages.length > 0
+        ? persisted.chatMessages
+        : currentState.chatMessages,
+      chatInput: typeof persisted.chatInput === 'string' ? persisted.chatInput : currentState.chatInput,
+      assistantMemory: persisted.assistantMemory ?? currentState.assistantMemory,
       theme: persisted.theme ?? currentState.theme,
       currentSection: persisted.currentSection ?? currentState.currentSection,
       isSidebarCollapsed: persisted.isSidebarCollapsed ?? currentState.isSidebarCollapsed,
@@ -1086,7 +1563,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set, get) => 
       knowledgeBaseList: Array.isArray(persisted.knowledgeBaseList) ? persisted.knowledgeBaseList : currentState.knowledgeBaseList,
       toolList: Array.isArray(persisted.toolList) ? persisted.toolList : currentState.toolList,
       skillList: Array.isArray(persisted.skillList) ? persisted.skillList : currentState.skillList,
+      appKeyList,
       resourceList,
+      currentCallInfo: extractRuntimeCallInfo(currentJson),
       ...validationState,
     };
   },

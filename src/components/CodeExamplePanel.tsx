@@ -1,11 +1,55 @@
 import { Code2 } from "lucide-react";
+import { useMemo } from "react";
 import { useWorkspaceStore } from "../store/workspace";
 import JsonCodeBlock from "./JsonCodeBlock";
 import { ModeSwitcher } from "./CenterHeaderControls";
 
 export default function CodeExamplePanel() {
-  const { currentJson, isValid, theme } = useWorkspaceStore();
+  const { currentJson, currentCallInfo, appKeyList, updateJson, isValid, theme, agentList, currentAgentId } = useWorkspaceStore();
   const isDark = theme === 'dark';
+  const parsedJson = useMemo(() => {
+    try {
+      return JSON.parse(currentJson);
+    } catch {
+      return null;
+    }
+  }, [currentJson]);
+  const runtimeInfo = {
+    appId: currentCallInfo?.appId || (typeof parsedJson?.AppId === "string" ? parsedJson.AppId : ""),
+  };
+  const currentAgent = useMemo(
+    () => agentList.find((agent) => agent.id === currentAgentId) ?? agentList[0] ?? null,
+    [agentList, currentAgentId]
+  );
+  const displayJson = useMemo(() => {
+    if (!parsedJson) return currentJson;
+
+    const draft = JSON.parse(JSON.stringify(parsedJson));
+    draft.RoomId = "自定义您的房间 ID，需与生成 RTC 鉴权 Token 时使用的 RoomId 一致";
+    draft.TaskId = "自定义您的任务 ID，用于唯一标识该对话任务";
+    draft.AgentConfig = draft.AgentConfig && typeof draft.AgentConfig === "object" ? draft.AgentConfig : {};
+    draft.AgentConfig.TargetUserId = ["需使用客户端 SDK 进房的真人用户的 UserId"];
+    draft.AgentConfig.UserId = currentAgent?.botId || "";
+
+    return JSON.stringify(draft, null, 2);
+  }, [currentAgent?.botId, currentJson, parsedJson]);
+  const highlightedValues = useMemo(
+    () => [
+      "自定义您的房间 ID，需与生成 RTC 鉴权 Token 时使用的 RoomId 一致",
+      "自定义您的任务 ID，用于唯一标识该对话任务",
+      "需使用客户端 SDK 进房的真人用户的 UserId",
+    ],
+    []
+  );
+
+  const handleAppIdChange = (nextAppId: string) => {
+    if (!parsedJson || !nextAppId) return;
+    const nextJson = {
+      ...parsedJson,
+      AppId: nextAppId,
+    };
+    updateJson(JSON.stringify(nextJson, null, 2));
+  };
 
   return (
     <div className={`flex h-full flex-col transition-colors ${isDark ? 'bg-zinc-950' : 'bg-white'}`}>
@@ -47,13 +91,37 @@ export default function CodeExamplePanel() {
             <span className={`h-1.5 w-1.5 rounded-full ${isValid ? "bg-emerald-500" : "bg-amber-500"}`} />
             {isValid ? "当前示例可用于预览调试" : "当前示例仍需补全必填配置"}
           </div>
+
+          <div className="mt-4">
+            <div className="flex items-center gap-3">
+              <div className={`shrink-0 text-[11px] font-medium ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>
+                选择运行的 AppId
+              </div>
+              <select
+                value={runtimeInfo.appId}
+                onChange={(event) => handleAppIdChange(event.target.value)}
+                className={`h-8 min-w-0 flex-1 rounded-lg border px-3 text-[12px] focus:outline-none ${
+                  isDark
+                    ? "border-zinc-800 bg-zinc-950 text-zinc-100 focus:border-blue-400/35"
+                    : "border-zinc-200 bg-white text-zinc-900 focus:border-blue-300"
+                }`}
+              >
+                {appKeyList.map((appKey) => (
+                  <option key={appKey.id} value={appKey.appId}>
+                    {appKey.name} / {appKey.appId}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
 
         <div className="mt-5 min-h-0 flex-1">
           <JsonCodeBlock
-            code={currentJson}
+            code={displayJson}
             fileName="StartVoiceChat"
             fillHeight
+            highlightStringValues={highlightedValues}
           />
         </div>
       </div>

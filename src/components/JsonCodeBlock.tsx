@@ -7,6 +7,7 @@ type JsonCodeBlockProps = {
   fileName?: string;
   maxHeightClass?: string;
   fillHeight?: boolean;
+  highlightStringValues?: string[];
 };
 
 type Token = {
@@ -16,7 +17,17 @@ type Token = {
 
 const tokenPattern = /("(?:\\.|[^"\\])*"(?=\s*:)|"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\b(?:true|false|null)\b|[{}\[\]:,])/g;
 
-function getTokenClass(token: string) {
+function getTokenClass(token: string, highlightStrings: Set<string>) {
+  if (token.startsWith('"')) {
+    try {
+      const parsedToken = JSON.parse(token);
+      if (typeof parsedToken === "string" && highlightStrings.has(parsedToken)) {
+        return "text-red-400";
+      }
+    } catch {
+      // Ignore token parse failures and fall back to default colors.
+    }
+  }
   if (/^".*"(?=\s*$)/.test(token)) return "text-emerald-300";
   if (/^-?\d/.test(token)) return "text-amber-300";
   if (token === "true" || token === "false") return "text-purple-300";
@@ -26,9 +37,10 @@ function getTokenClass(token: string) {
   return "text-slate-100";
 }
 
-function tokenizeJson(code: string): Token[] {
+function tokenizeJson(code: string, highlightStringValues: string[] = []): Token[] {
   const tokens: Token[] = [];
   let lastIndex = 0;
+  const highlightStrings = new Set(highlightStringValues);
 
   for (const match of code.matchAll(tokenPattern)) {
     const value = match[0];
@@ -41,7 +53,7 @@ function tokenizeJson(code: string): Token[] {
     const isKey = value.startsWith('"') && code.slice(index + value.length).match(/^\s*:/);
     tokens.push({
       value,
-      className: isKey ? "text-sky-300" : getTokenClass(value),
+      className: isKey ? "text-sky-300" : getTokenClass(value, highlightStrings),
     });
     lastIndex = index + value.length;
   }
@@ -58,11 +70,12 @@ export default function JsonCodeBlock({
   fileName = "json",
   maxHeightClass = "max-h-80",
   fillHeight = false,
+  highlightStringValues = [],
 }: JsonCodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const [lineWrap, setLineWrap] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const tokens = useMemo(() => tokenizeJson(code), [code]);
+  const tokens = useMemo(() => tokenizeJson(code, highlightStringValues), [code, highlightStringValues]);
 
   useEffect(() => {
     if (!isFullscreen) return;

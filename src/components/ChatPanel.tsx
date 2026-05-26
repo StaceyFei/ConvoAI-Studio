@@ -1,6 +1,7 @@
 import { Mic, Loader2, ArrowUp, BotMessageSquare } from "lucide-react";
 import { useState, useRef, useEffect, KeyboardEvent } from "react";
 import { useWorkspaceStore } from "../store/workspace";
+import type { ChatMessage } from "../store/workspace";
 import JsonCodeBlock from "./JsonCodeBlock";
 
 // Web Speech API interfaces
@@ -58,7 +59,11 @@ function MessageContent({ content }: { content: string }) {
       {parts.map((part, index) => {
         const codeMatch = part.match(/^```(?:json)?\n([\s\S]*?)\n```$/);
         if (!codeMatch) {
-          return <span key={index}>{part}</span>;
+          return (
+            <span key={index} className="break-words [overflow-wrap:anywhere]">
+              {part}
+            </span>
+          );
         }
 
         return <JsonCodeBlock key={index} code={codeMatch[1]} fileName="StartVoiceChat" />;
@@ -67,13 +72,66 @@ function MessageContent({ content }: { content: string }) {
   );
 }
 
-export default function ChatPanel() {
-  const { chatMessages, isGenerating, sendMessage, theme, stopGenerating, chatInput, setChatInput } = useWorkspaceStore();
+type ChatPanelProps = {
+  messages?: ChatMessage[];
+  isGenerating?: boolean;
+  generatingText?: string;
+  input?: string;
+  onInputChange?: (value: string) => void;
+  onSend?: (value: string) => void;
+  onStop?: () => void;
+  placeholder?: string;
+  quickOptions?: string[];
+  onQuickOptionClick?: (value: string) => void;
+  showVoiceInput?: boolean;
+};
+
+export default function ChatPanel({
+  messages,
+  isGenerating: isGeneratingProp,
+  generatingText = "Agent 正在思考...",
+  input,
+  onInputChange,
+  onSend,
+  onStop,
+  placeholder = "描述你的需求...",
+  quickOptions,
+  onQuickOptionClick,
+  showVoiceInput = true,
+}: ChatPanelProps = {}) {
+  const {
+    chatMessages,
+    isGenerating,
+    sendMessage,
+    theme,
+    stopGenerating,
+    chatInput,
+    setChatInput,
+  } = useWorkspaceStore();
   const [isRecording, setIsRecording] = useState(false);
   const [isSpeechSupported, setIsSpeechSupported] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const resolvedMessages = messages ?? chatMessages;
+  const resolvedInput = input ?? chatInput;
+  const resolvedGenerating = isGeneratingProp ?? isGenerating;
+  const resolvedQuickOptions = quickOptions ?? [
+    "我想跑通一个基础对话流程",
+    "我想在对话中增加联网查询能力",
+    "我想实现多人识别和个性化回复",
+    "我想让ai正确朗读数学公式",
+    "我想把ai的语速调快一点",
+  ];
+
+  const updateInput = (value: string) => {
+    if (onInputChange) {
+      onInputChange(value);
+      return;
+    }
+    setChatInput(value);
+  };
 
   useEffect(() => {
+    if (!showVoiceInput) return;
     // Initialize Speech Recognition
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
@@ -98,7 +156,7 @@ export default function ChatPanel() {
         // Only update with final results to avoid overwriting typed text with partial recognition
         if (finalTranscript) {
           const currentInput = useWorkspaceStore.getState().chatInput;
-          setChatInput(currentInput + (currentInput.length > 0 && !currentInput.endsWith(' ') ? ' ' : '') + finalTranscript);
+          updateInput(currentInput + (currentInput.length > 0 && !currentInput.endsWith(' ') ? ' ' : '') + finalTranscript);
         }
       };
 
@@ -122,7 +180,7 @@ export default function ChatPanel() {
         recognitionRef.current.stop();
       }
     };
-  }, []);
+  }, [showVoiceInput]);
 
   const toggleRecording = () => {
     if (isRecording) {
@@ -138,8 +196,12 @@ export default function ChatPanel() {
   };
 
   const handleSend = () => {
-    if (!chatInput.trim() || isGenerating) return;
-    sendMessage(chatInput.trim());
+    if (!resolvedInput.trim() || resolvedGenerating) return;
+    if (onSend) {
+      onSend(resolvedInput.trim());
+      return;
+    }
+    sendMessage(resolvedInput.trim());
     setChatInput("");
   };
 
@@ -166,13 +228,13 @@ export default function ChatPanel() {
 
       {/* Chat Messages Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {chatMessages.map((msg) => (
+        {resolvedMessages.map((msg) => (
           <div
             key={msg.id}
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
           >
             <div
-              className={`rounded-lg p-3 text-sm max-w-[90%] whitespace-pre-wrap ${
+              className={`min-w-0 max-w-[90%] overflow-hidden rounded-lg p-3 text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${
                 msg.role === "user"
                   ? "bg-blue-600 text-white"
                   : theme === 'dark' ? "bg-zinc-800 text-zinc-300" : "bg-zinc-100 text-zinc-800"
@@ -182,13 +244,13 @@ export default function ChatPanel() {
             </div>
           </div>
         ))}
-        {isGenerating && (
+        {resolvedGenerating && (
           <div className="flex justify-start">
             <div className={`rounded-lg p-3 text-sm flex items-center space-x-2 ${
               theme === 'dark' ? 'bg-zinc-800 text-zinc-300' : 'bg-zinc-100 text-zinc-800'
             }`}>
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Agent 正在思考...</span>
+              <span>{generatingText}</span>
             </div>
           </div>
         )}
@@ -200,21 +262,21 @@ export default function ChatPanel() {
       }`}>
         {/* Quick Options */}
         <div className="flex overflow-x-auto space-x-2 mb-3 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {[
-            "我想跑通一个基础对话流程",
-            "我想在对话中增加联网查询能力",
-            "我想实现多人识别和个性化回复",
-            "我想让ai正确朗读数学公式",
-            "我想把ai的语速调快一点"
-          ].map((option, idx) => (
+          {resolvedQuickOptions.map((option, idx) => (
             <button
               key={idx}
               onClick={() => {
-                if (!isGenerating) {
-                  sendMessage(option);
+                if (!resolvedGenerating) {
+                  if (onQuickOptionClick) {
+                    onQuickOptionClick(option);
+                  } else if (onSend) {
+                    onSend(option);
+                  } else {
+                    sendMessage(option);
+                  }
                 }
               }}
-              disabled={isGenerating}
+              disabled={resolvedGenerating}
               className={`whitespace-nowrap px-3 py-1.5 text-xs rounded-full border transition-colors ${
                 theme === 'dark'
                   ? 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700 hover:text-white'
@@ -228,10 +290,10 @@ export default function ChatPanel() {
 
         <div className="relative">
           <textarea
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
+            value={resolvedInput}
+            onChange={(e) => updateInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="描述你的需求..."
+            placeholder={placeholder}
             className={`block w-full border rounded-lg pl-3 pr-24 pt-3 pb-4 text-sm resize-none outline-none transition-colors ${
               theme === 'dark' 
                 ? 'bg-zinc-950 border-zinc-800 text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/70' 
@@ -240,7 +302,7 @@ export default function ChatPanel() {
             rows={3}
           />
           <div className="absolute right-3 bottom-3 flex space-x-2">
-            {isSpeechSupported && (
+            {showVoiceInput && isSpeechSupported && (
               <button
                 onClick={toggleRecording}
                 className={`p-2 rounded-md transition-colors flex items-center justify-center ${
@@ -255,9 +317,9 @@ export default function ChatPanel() {
                 <Mic className="w-4 h-4" />
               </button>
             )}
-            {isGenerating ? (
+            {resolvedGenerating ? (
               <button
-                onClick={stopGenerating}
+                onClick={onStop ?? stopGenerating}
                 className={`p-2 rounded-md transition-colors flex items-center justify-center ${
                   theme === 'dark' 
                     ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300" 
@@ -271,13 +333,13 @@ export default function ChatPanel() {
               <button
                 onClick={handleSend}
                 className={`p-2 rounded-md transition-colors flex items-center justify-center disabled:cursor-not-allowed ${
-                  chatInput.trim()
+                  resolvedInput.trim()
                     ? "bg-black text-white hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
                     : theme === 'dark'
                       ? "bg-zinc-800 text-zinc-500"
                       : "bg-zinc-100 text-zinc-500"
                 }`}
-                disabled={!chatInput.trim()}
+                disabled={!resolvedInput.trim()}
                 title="发送"
               >
                 <ArrowUp className="w-4 h-4 stroke-[3]" />
