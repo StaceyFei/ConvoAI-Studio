@@ -705,6 +705,8 @@ export default function Home() {
   const [copiedBusinessId, setCopiedBusinessId] = useState<string | null>(null);
   const [appSearchQuery, setAppSearchQuery] = useState("");
   const [selectedAppDetailId, setSelectedAppDetailId] = useState<string | null>(null);
+  const [renderedAppDetailId, setRenderedAppDetailId] = useState<string | null>(null);
+  const [isAppDetailVisible, setIsAppDetailVisible] = useState(false);
   const [appActionMenuId, setAppActionMenuId] = useState<string | null>(null);
   const [floatingAppActionMenu, setFloatingAppActionMenu] = useState<{
     id: string;
@@ -716,6 +718,7 @@ export default function Home() {
   const isDark = theme === "dark";
   const resolvedSidebarWidth = isSidebarCollapsed ? 52 : 232;
   const assistantLayoutRef = useRef<HTMLDivElement | null>(null);
+  const appDetailCloseTimerRef = useRef<number | null>(null);
   const selectedAgentTemplate =
     agentTemplates.find((item) => item.id === selectedAgentTemplateId) ?? agentTemplates[0];
   const resourceBindings = resourceList.map((resource) => {
@@ -758,6 +761,39 @@ export default function Home() {
       setSelectedAppDetailId(null);
     }
   }, [appKeyList, selectedAppDetailId]);
+
+  useEffect(() => {
+    if (appDetailCloseTimerRef.current) {
+      window.clearTimeout(appDetailCloseTimerRef.current);
+      appDetailCloseTimerRef.current = null;
+    }
+
+    if (selectedAppDetailId) {
+      setRenderedAppDetailId(selectedAppDetailId);
+      const frameId = window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          setIsAppDetailVisible(true);
+        });
+      });
+      return () => window.cancelAnimationFrame(frameId);
+    }
+
+    setIsAppDetailVisible(false);
+    appDetailCloseTimerRef.current = window.setTimeout(() => {
+      setRenderedAppDetailId(null);
+      appDetailCloseTimerRef.current = null;
+    }, 420);
+
+    return undefined;
+  }, [selectedAppDetailId]);
+
+  useEffect(() => {
+    return () => {
+      if (appDetailCloseTimerRef.current) {
+        window.clearTimeout(appDetailCloseTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!appActionMenuId) return;
@@ -3729,7 +3765,7 @@ ${draft.configJson}
             </div>
           </div>
 
-          <div className="relative flex items-start gap-2" data-app-action-menu-root="true">
+          <div className="relative flex items-start gap-2 pt-1.5" data-app-action-menu-root="true">
             <span
               className={`rounded-full px-3 py-1 text-xs ${
                 item.status === "已启用"
@@ -4121,7 +4157,7 @@ ${draft.configJson}
   };
 
   const renderAppKeys = () => {
-    const selectedAppDetail = appKeyList.find((item) => item.id === selectedAppDetailId) ?? null;
+    const selectedAppDetail = appKeyList.find((item) => item.id === renderedAppDetailId) ?? null;
     const selectedAppActionMenuItem =
       floatingAppActionMenu && appActionMenuId === floatingAppActionMenu.id
         ? appKeyList.find((item) => item.id === floatingAppActionMenu.id) ?? null
@@ -4481,7 +4517,11 @@ ${draft.configJson}
           <div className="fixed inset-x-0 bottom-0 -top-6 z-50">
             <button
               type="button"
-              className="absolute inset-0 bg-black/35"
+              className={`absolute inset-0 bg-gradient-to-l transition-opacity duration-[380ms] ease-out ${
+                isAppDetailVisible
+                  ? "from-black/35 via-black/18 to-black/0 opacity-100"
+                  : "from-black/0 via-black/0 to-black/0 opacity-0"
+              }`}
               onClick={() => {
                 setSelectedAppDetailId(null);
                 setAppActionMenuId(null);
@@ -4489,11 +4529,15 @@ ${draft.configJson}
               aria-label="关闭应用详情"
             />
             <div
-              className={`absolute inset-y-0 right-0 w-full max-w-[920px] border-l shadow-2xl ${
-                isDark ? "border-zinc-800 bg-zinc-950" : "border-zinc-200 bg-white"
-              }`}
+              className={`absolute inset-y-0 right-0 w-full max-w-[920px] border-l shadow-[0_24px_80px_rgba(0,0,0,0.18)] transform-gpu transition-transform duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
+                isAppDetailVisible ? "translate-x-0" : "translate-x-full"
+              } ${isDark ? "border-zinc-800 bg-zinc-950" : "border-zinc-200 bg-white"}`}
             >
-              <div className="flex h-full flex-col">
+              <div
+                className={`flex h-full flex-col transition-all duration-[460ms] ease-out ${
+                  isAppDetailVisible ? "translate-y-0 opacity-100 delay-[40ms]" : "translate-y-1 opacity-0 delay-0"
+                }`}
+              >
                 <div className="flex-1 overflow-y-auto p-6 pt-4">
                   {renderAppKeyDetailCard(selectedAppDetail)}
                 </div>
