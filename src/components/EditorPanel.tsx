@@ -1,4 +1,4 @@
-import { AudioLines, Bot, Boxes, Check, ChevronDown, Copy, GitBranch, Pencil, Plus, Search, Sparkles, X } from "lucide-react";
+import { AudioLines, BookOpen, Bot, Boxes, BrainCircuit, Check, ChevronDown, Copy, Mic, Pencil, Plus, Search, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceStore } from "../store/workspace";
 import { ModeSwitcher } from "./CenterHeaderControls";
@@ -16,6 +16,7 @@ export default function EditorPanel() {
     theme,
     updateJson,
     resourceList,
+    knowledgeBaseList,
     toolList,
     skillList,
     previewAgent,
@@ -29,9 +30,10 @@ export default function EditorPanel() {
   const [isLlmAdvancedOpen, setIsLlmAdvancedOpen] = useState(false);
   const [isTtsAdvancedOpen, setIsTtsAdvancedOpen] = useState(false);
   const [isBotIdCopied, setIsBotIdCopied] = useState(false);
-  const [activeCapabilityEditKey, setActiveCapabilityEditKey] = useState<null | "tools" | "skills">(null);
-  const [openCapabilityPicker, setOpenCapabilityPicker] = useState<null | "tools" | "skills">(null);
-  const [capabilitySearch, setCapabilitySearch] = useState<Record<"tools" | "skills", string>>({
+  const [activeCapabilityEditKey, setActiveCapabilityEditKey] = useState<null | "knowledge" | "tools" | "skills">(null);
+  const [openCapabilityPicker, setOpenCapabilityPicker] = useState<null | "knowledge" | "tools" | "skills">(null);
+  const [capabilitySearch, setCapabilitySearch] = useState<Record<"knowledge" | "tools" | "skills", string>>({
+    knowledge: "",
     tools: "",
     skills: "",
   });
@@ -87,6 +89,9 @@ export default function EditorPanel() {
             MaxTokens: 2048,
             HistoryRounds: 10,
           },
+        },
+        KnowledgeConfig: {
+          KnowledgeBases: [] as string[],
         },
       },
     }),
@@ -202,20 +207,64 @@ export default function EditorPanel() {
           .filter(Boolean)
       )
     );
+  const normalizeKnowledgeReferenceList = (value: unknown) =>
+    Array.from(
+      new Set(
+        (Array.isArray(value) ? value : [])
+          .map((item) => {
+            if (typeof item === "string") return item.trim();
+            if (item && typeof item === "object") {
+              const id = "id" in item && typeof item.id === "string" ? item.id.trim() : "";
+              const valueText = "value" in item && typeof item.value === "string" ? item.value.trim() : "";
+              const name = "name" in item && typeof item.name === "string" ? item.name.trim() : "";
+              return id || valueText || name;
+            }
+            return "";
+          })
+          .filter(Boolean)
+      )
+    );
+  const defaultKnowledgeValues = isBlankPreset ? [] : knowledgeBaseList.slice(0, 2).map((knowledge) => knowledge.id);
   const defaultToolValues = isBlankPreset ? [] : ["知识检索 MCP", "工单系统 MCP"];
   const defaultSkillValues = isBlankPreset ? [] : ["意图分类 Skill", "摘要生成 Skill"];
+  const rawKnowledgeValues = parsedConfig?.Config?.KnowledgeConfig?.KnowledgeBases;
   const rawToolValues = parsedConfig?.Config?.FunctionCallingConfig?.Tools;
   const rawSkillValues = parsedConfig?.Config?.SkillConfig?.Skills;
+  const currentKnowledgeValues = Array.isArray(rawKnowledgeValues)
+    ? normalizeKnowledgeReferenceList(rawKnowledgeValues)
+    : defaultKnowledgeValues;
   const currentToolValues = Array.isArray(rawToolValues) ? normalizeStringList(rawToolValues) : defaultToolValues;
   const currentSkillValues = Array.isArray(rawSkillValues) ? normalizeStringList(rawSkillValues) : defaultSkillValues;
+  const getKnowledgeLabel = (value: string) => knowledgeBaseList.find((knowledge) => knowledge.id === value)?.name || value;
+  const getCapabilityValueLabel = (key: "knowledge" | "tools" | "skills", value: string) =>
+    key === "knowledge" ? getKnowledgeLabel(value) : value;
   const capabilityGroups = [
     {
+      key: "knowledge" as const,
+      title: "知识库",
+      description: "可直接引用已创建的知识库内容",
+      icon: BookOpen,
+      values: currentKnowledgeValues,
+      emptyText: "待关联知识库",
+      addLabel: "添加知识库",
+      searchPlaceholder: "搜索知识库",
+      emptyPickerText: "暂无可添加知识库，可先到“我的知识库”创建",
+      options: knowledgeBaseList.map((knowledge) => ({
+        value: knowledge.id,
+        label: knowledge.name,
+        description: `${knowledge.type} · ${knowledge.status} · ${knowledge.documentCount} 篇文档`,
+      })),
+    },
+    {
       key: "tools" as const,
-      title: "工具 / MCP",
+      title: "Tools / MCP",
       description: "可直接调用的外部能力与 MCP 工具",
       icon: Boxes,
       values: currentToolValues,
       emptyText: "待添加 MCP",
+      addLabel: "添加 MCP",
+      searchPlaceholder: "搜索 MCP",
+      emptyPickerText: "暂无可添加项",
       options: toolList.map((tool) => ({
         value: tool.name,
         label: tool.name,
@@ -224,11 +273,14 @@ export default function EditorPanel() {
     },
     {
       key: "skills" as const,
-      title: "Skill",
+      title: "Skills",
       description: "模板内置的推理与处理能力",
-      icon: GitBranch,
+      icon: Sparkles,
       values: currentSkillValues,
       emptyText: "待添加 Skill",
+      addLabel: "添加 Skill",
+      searchPlaceholder: "搜索 Skill",
+      emptyPickerText: "暂无可添加项",
       options: skillList.map((skill) => ({
         value: skill.name,
         label: skill.name,
@@ -274,6 +326,10 @@ export default function EditorPanel() {
     nextConfig.Config.TTSConfig.ProviderParams.audio.speech_rate = nextConfig.Config.TTSConfig.ProviderParams.audio.speech_rate ?? 0;
     nextConfig.Config.TTSConfig.ProviderParams.audio.volume = nextConfig.Config.TTSConfig.ProviderParams.audio.volume ?? 0;
     nextConfig.Config.TTSConfig.ProviderParams.audio.pitch = nextConfig.Config.TTSConfig.ProviderParams.audio.pitch ?? 0;
+    nextConfig.Config.KnowledgeConfig = nextConfig.Config.KnowledgeConfig || {};
+    nextConfig.Config.KnowledgeConfig.KnowledgeBases = Array.isArray(nextConfig.Config.KnowledgeConfig.KnowledgeBases)
+      ? nextConfig.Config.KnowledgeConfig.KnowledgeBases
+      : [];
     nextConfig.Config.FunctionCallingConfig = nextConfig.Config.FunctionCallingConfig || {};
     nextConfig.Config.FunctionCallingConfig.Tools = Array.isArray(nextConfig.Config.FunctionCallingConfig.Tools)
       ? nextConfig.Config.FunctionCallingConfig.Tools
@@ -286,8 +342,12 @@ export default function EditorPanel() {
     updater(nextConfig);
     updateJson(JSON.stringify(nextConfig, null, 2));
   };
-  const updateCapabilityValues = (key: "tools" | "skills", values: string[]) => {
+  const updateCapabilityValues = (key: "knowledge" | "tools" | "skills", values: string[]) => {
     updateConfig((draft) => {
+      if (key === "knowledge") {
+        draft.Config.KnowledgeConfig.KnowledgeBases = values;
+        return;
+      }
       if (key === "tools") {
         draft.Config.FunctionCallingConfig.Tools = values;
         return;
@@ -295,16 +355,18 @@ export default function EditorPanel() {
       draft.Config.SkillConfig.Skills = values;
     });
   };
-  const addCapabilityValue = (key: "tools" | "skills", value: string) => {
-    const currentValues = key === "tools" ? currentToolValues : currentSkillValues;
+  const addCapabilityValue = (key: "knowledge" | "tools" | "skills", value: string) => {
+    const currentValues =
+      key === "knowledge" ? currentKnowledgeValues : key === "tools" ? currentToolValues : currentSkillValues;
     updateCapabilityValues(key, normalizeStringList([...currentValues, value]));
     setOpenCapabilityPicker(null);
   };
-  const removeCapabilityValue = (key: "tools" | "skills", value: string) => {
-    const currentValues = key === "tools" ? currentToolValues : currentSkillValues;
+  const removeCapabilityValue = (key: "knowledge" | "tools" | "skills", value: string) => {
+    const currentValues =
+      key === "knowledge" ? currentKnowledgeValues : key === "tools" ? currentToolValues : currentSkillValues;
     updateCapabilityValues(key, currentValues.filter((item) => item !== value));
   };
-  const startCapabilityEditing = (key: "tools" | "skills") => {
+  const startCapabilityEditing = (key: "knowledge" | "tools" | "skills") => {
     setCapabilityEditingSnapshot(currentJson);
     setOpenCapabilityPicker(null);
     setActiveCapabilityEditKey(key);
@@ -416,13 +478,13 @@ export default function EditorPanel() {
   const summaryItems = [
     {
       key: "asr",
-      icon: AudioLines,
+      icon: Mic,
       label: "语音识别",
       value: currentAsrResource ? `${currentAsrResource.providerLabel} / ${currentAsrModel || "待选择模型"}` : "待选择",
     },
     {
       key: "llm",
-      icon: Sparkles,
+      icon: BrainCircuit,
       label: "大模型",
       value: currentLlmResource ? `${currentLlmResource.providerLabel} / ${currentModel || "待选择模型"}` : "待选择",
     },
@@ -1699,7 +1761,7 @@ export default function EditorPanel() {
                             isDark ? "border-zinc-700 bg-zinc-950 text-zinc-300" : "border-zinc-200 bg-zinc-50 text-zinc-600"
                           }`}
                         >
-                          <span>{value}</span>
+                          <span>{getCapabilityValueLabel(group.key, value)}</span>
                           {isCapabilityEditing ? (
                             <button
                               type="button"
@@ -1735,7 +1797,7 @@ export default function EditorPanel() {
                         }`}
                       >
                         <Plus className="h-3 w-3" />
-                        <span>{group.key === "tools" ? "添加 MCP" : "添加 Skill"}</span>
+                        <span>{group.addLabel}</span>
                       </button>
 
                       {openCapabilityPicker === group.key ? (
@@ -1758,7 +1820,7 @@ export default function EditorPanel() {
                                 onChange={(event) =>
                                   setCapabilitySearch((current) => ({ ...current, [group.key]: event.target.value }))
                                 }
-                                placeholder={group.key === "tools" ? "搜索 MCP" : "搜索 Skill"}
+                                placeholder={group.searchPlaceholder}
                                 className={`w-full border-0 bg-transparent p-0 text-[11px] focus:outline-none ${
                                   isDark ? "text-zinc-100 placeholder:text-zinc-500" : "text-zinc-800 placeholder:text-zinc-400"
                                 }`}
@@ -1786,7 +1848,21 @@ export default function EditorPanel() {
                             </div>
                           ) : (
                             <div className={`px-3 py-3 text-[11px] ${isDark ? "text-zinc-500" : "text-zinc-400"}`}>
-                              {searchKeyword ? "没有匹配结果" : "暂无可添加项"}
+                              <div>{searchKeyword ? "没有匹配结果" : group.emptyPickerText}</div>
+                              {group.key === "knowledge" && !searchKeyword && knowledgeBaseList.length === 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    cancelCapabilityEditing();
+                                    setCurrentSection("knowledge");
+                                  }}
+                                  className={`mt-2 inline-flex items-center rounded-md text-[11px] transition-colors ${
+                                    isDark ? "text-blue-300 hover:text-blue-200" : "text-blue-600 hover:text-blue-500"
+                                  }`}
+                                >
+                                  前往“我的知识库”
+                                </button>
+                              ) : null}
                             </div>
                           )}
                         </div>

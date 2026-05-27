@@ -7,6 +7,7 @@ import {
   AudioLines,
   BarChart3,
   BadgeInfo,
+  BrainCircuit,
   Bot,
   BotMessageSquare,
   BookOpen,
@@ -181,6 +182,7 @@ type AgentTemplate = {
   prompt: string;
   welcomeMessage: string;
   features: string[];
+  knowledge: string[];
   tools: string[];
   skills: string[];
 };
@@ -197,6 +199,7 @@ const agentTemplates: AgentTemplate[] = [
     prompt: "你是一名企业智能助理，回答要准确、简洁、可靠，优先基于企业知识库和工具结果完成问题解答与任务协同。",
     welcomeMessage: "你好，我是你的企业智能助理，可以帮你解答问题和处理任务。",
     features: ["云端录制", "RTS 实时消息"],
+    knowledge: ["产品帮助中心", "售后知识库"],
     tools: ["知识检索 MCP", "工单系统 MCP"],
     skills: ["意图分类 Skill", "摘要生成 Skill"],
   },
@@ -211,6 +214,7 @@ const agentTemplates: AgentTemplate[] = [
     prompt: "你是一位可爱、活泼、善于互动的玩偶角色，语气轻松俏皮，适合陪聊、互动问答和直播场景。",
     welcomeMessage: "嗨，我来陪你玩啦，今天想聊点什么？",
     features: ["声纹降噪", "多人声纹识别"],
+    knowledge: ["直播运营资料"],
     tools: ["表情动作控制 MCP"],
     skills: ["话术生成 Skill", "情绪识别 Skill"],
   },
@@ -225,6 +229,7 @@ const agentTemplates: AgentTemplate[] = [
     prompt: "你是一位温柔、有边界感、擅长共情和安抚的陪伴型助手，要先理解用户情绪，再给出温暖、自然的回应。",
     welcomeMessage: "你好，我在这里陪你。如果你愿意，可以和我说说今天的心情。",
     features: ["声纹降噪", "云端录制"],
+    knowledge: ["产品帮助中心"],
     tools: ["用户画像 MCP"],
     skills: ["情绪识别 Skill", "回复建议 Skill"],
   },
@@ -239,6 +244,7 @@ const agentTemplates: AgentTemplate[] = [
     prompt: "你是一名专业双语翻译助手，要求翻译准确、自然、保留术语一致性，并可在必要时给出简短解释。",
     welcomeMessage: "你好，我可以帮你进行中英双语实时翻译。",
     features: ["RTS 实时消息", "硬件场景接入"],
+    knowledge: ["产品帮助中心"],
     tools: ["术语库 MCP", "会议纪要 MCP"],
     skills: ["多语翻译 Skill", "术语纠偏 Skill"],
   },
@@ -253,6 +259,7 @@ const agentTemplates: AgentTemplate[] = [
     prompt: "你是一位面向儿童的百科老师，表达要友好、易懂、安全，尽量用孩子能理解的方式解释知识点。",
     welcomeMessage: "小朋友你好呀，今天想和我一起认识什么新知识呢？",
     features: ["多人声纹识别", "云端录制"],
+    knowledge: ["产品帮助中心", "直播运营资料"],
     tools: ["知识检索 MCP", "课程编排 MCP"],
     skills: ["内容审核 Skill", "分龄讲解 Skill"],
   },
@@ -1292,6 +1299,12 @@ export default function Home() {
     }
     setPreviewAgent(null);
     setAgentTemplatePageOpen(false);
+  };
+  const handleSidebarSectionChange = (section: WorkspaceSection) => {
+    if (agentTemplatePageOpen && section === "agents") {
+      closeAgentTemplatePage();
+    }
+    setCurrentSection(section);
   };
 
   useEffect(() => {
@@ -2605,7 +2618,7 @@ ${draft.configJson}
                   <div className={`mt-4 text-[13px] leading-6 ${subduedTextClass}`}>{selectedAgentTemplate.description}</div>
                   <div className="mt-5 grid gap-3 sm:grid-cols-2">
                     {[
-                      { icon: Settings2, label: "模型", value: formatManagedModelLabel(selectedAgentTemplate.model) },
+                      { icon: BrainCircuit, label: "模型", value: formatManagedModelLabel(selectedAgentTemplate.model) },
                       { icon: AudioLines, label: "音色", value: formatManagedVoiceLabel(selectedAgentTemplate.voice) },
                     ].map((item) => {
                       const Icon = item.icon;
@@ -2646,22 +2659,22 @@ ${draft.configJson}
                 <div className="space-y-4">
                   {[
                     {
-                      title: "高级功能",
-                      description: "默认启用的互动与智能能力",
-                      values: selectedAgentTemplate.features,
-                      icon: ShieldCheck,
+                      title: "知识库",
+                      description: "模板默认关联的知识内容来源",
+                      values: selectedAgentTemplate.knowledge,
+                      icon: BookOpen,
                     },
                     {
-                      title: "工具",
+                      title: "Tools / MCP",
                       description: "可直接调用的外部能力与 MCP 工具",
                       values: selectedAgentTemplate.tools,
                       icon: Boxes,
                     },
                     {
-                      title: "Skill",
+                      title: "Skills",
                       description: "模板内置的推理与处理能力",
                       values: selectedAgentTemplate.skills,
-                      icon: GitBranch,
+                      icon: Sparkles,
                     },
                   ].map((group) => {
                     const Icon = group.icon;
@@ -5291,7 +5304,7 @@ ${draft.configJson}
                   <button
                     key={item.key}
                     type="button"
-                    onClick={() => setCurrentSection(item.key)}
+                    onClick={() => handleSidebarSectionChange(item.key)}
                     className={`relative flex items-center overflow-hidden text-left transition-all duration-200 ${
                       isSidebarCollapsed ? "mx-auto h-9 w-9 justify-center rounded-lg p-0 md:h-10 md:w-10" : "w-full gap-2 rounded-lg px-2 py-1.5 md:gap-2.5 md:px-2.5"
                     } ${
@@ -5329,7 +5342,7 @@ ${draft.configJson}
                           <button
                             key={child.key}
                             type="button"
-                            onClick={() => setCurrentSection(child.key)}
+                            onClick={() => handleSidebarSectionChange(child.key)}
                             className={`mx-auto flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
                             isSidebarCollapsed ? "md:h-10 md:w-10 h-9 w-9" : ""
                           } ${
@@ -5372,24 +5385,46 @@ ${draft.configJson}
                           {item.children.map((child) => {
                             const isChildActive = currentSection === child.key;
                             const ChildIcon = child.icon;
+                            const showCreateAgentShortcut = child.key === "agents";
                             return (
-                              <button
-                                key={child.key}
-                                type="button"
-                                onClick={() => setCurrentSection(child.key)}
-                                className={`relative flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors md:px-2.5 ${
-                                  isChildActive
-                                    ? isDark
-                                      ? "bg-zinc-900/80 text-zinc-100"
-                                      : "bg-zinc-100 text-zinc-900"
-                                    : isDark
-                                      ? "text-zinc-400 hover:bg-zinc-900/80 hover:text-zinc-200"
-                                      : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
-                                }`}
-                              >
-                                <ChildIcon className={`h-4 w-4 shrink-0 ${isChildActive ? (isDark ? "text-zinc-200" : "text-zinc-700") : (isDark ? "text-zinc-500" : "text-zinc-400")}`} />
-                                <span className="truncate text-[12px] font-medium md:text-[13px]">{child.label}</span>
-                              </button>
+                              <div key={child.key} className="relative">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSidebarSectionChange(child.key)}
+                                  className={`relative flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors md:px-2.5 ${
+                                    showCreateAgentShortcut ? "pr-9" : ""
+                                  } ${
+                                    isChildActive
+                                      ? isDark
+                                        ? "bg-zinc-900/80 text-zinc-100"
+                                        : "bg-zinc-100 text-zinc-900"
+                                      : isDark
+                                        ? "text-zinc-400 hover:bg-zinc-900/80 hover:text-zinc-200"
+                                        : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+                                  }`}
+                                >
+                                  <ChildIcon className={`h-4 w-4 shrink-0 ${isChildActive ? (isDark ? "text-zinc-200" : "text-zinc-700") : (isDark ? "text-zinc-500" : "text-zinc-400")}`} />
+                                  <span className="truncate text-[12px] font-medium md:text-[13px]">{child.label}</span>
+                                </button>
+                                {showCreateAgentShortcut ? (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleCreateAgent();
+                                    }}
+                                    className={`absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md transition-colors ${
+                                      isDark
+                                        ? "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                                        : "text-zinc-400 hover:bg-zinc-200/80 hover:text-zinc-700"
+                                    }`}
+                                    title="创建智能体"
+                                    aria-label="创建智能体"
+                                  >
+                                    <Plus className="h-3.5 w-3.5" />
+                                  </button>
+                                ) : null}
+                              </div>
                             );
                           })}
                         </div>

@@ -96,6 +96,7 @@ const startVoiceChatSchema = {
           }
         },
         SubtitleConfig: { type: "object" },
+        KnowledgeConfig: { type: "object" },
         FunctionCallingConfig: { type: "object" },
         InterruptMode: { type: "integer" },
         AvatarConfig: { type: "object" },
@@ -606,6 +607,12 @@ function withRuntimeDefaults(rawConfig: unknown, options?: RuntimeDefaultsOption
     ? runtimeCallInfo.agentUserId
     : currentUserId;
   draft.AgentConfig.TargetUserId = [normalizeTargetUserId(draft.AgentConfig.TargetUserId) || runtimeCallInfo.targetUserId];
+  draft.Config = draft.Config && typeof draft.Config === "object" ? draft.Config : {};
+  draft.Config.KnowledgeConfig =
+    draft.Config.KnowledgeConfig && typeof draft.Config.KnowledgeConfig === "object" ? draft.Config.KnowledgeConfig : {};
+  draft.Config.KnowledgeConfig.KnowledgeBases = Array.isArray(draft.Config.KnowledgeConfig.KnowledgeBases)
+    ? draft.Config.KnowledgeConfig.KnowledgeBases
+    : [];
 
   return draft;
 }
@@ -671,6 +678,9 @@ export function buildEmptyConfigJson() {
             MaxTokens: 2048,
             HistoryRounds: 10,
           },
+        },
+        KnowledgeConfig: {
+          KnowledgeBases: [],
         },
       },
     }),
